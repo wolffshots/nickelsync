@@ -33,7 +33,7 @@ private Q_SLOTS:
     void onSettled();
 
 private:
-    enum State { Idle, Connecting, Pulling, Checking, Requested, Running, Settling };
+    enum State { Idle, Connecting, Pulling, Checking, Requested, Running, Settling, Uploading };
 
     bool wire();
     QObject *openBook();
@@ -41,6 +41,7 @@ private:
     void push();
     void startSync();
     void finish(QString const &result, QString const &detail = QString());
+    void restoreAirplaneMode();
     void toast(QString const &main, QString const &sub = QString());
     void log(QString const &line);
 
@@ -49,6 +50,7 @@ private:
     bool pullWired = false;
     bool restoreAirplane = false;
     bool downloadStarted = false;
+    bool quickSync = false; // inside a book, sync only the reading position
     QDateTime baseline;
     QPointer<QWidget> view; // the ReadingView of the open book
     QString position;       // the reading position result, for the last toast

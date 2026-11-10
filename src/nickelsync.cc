@@ -10,7 +10,9 @@
 // Nickel then shows its "Sync to last page read?" prompt if the server is
 // newer. If no prompt shows, NickelSync sends the position with the
 // ReadingView signals saveBookmark() and sendBookmark(Volume), which Nickel
-// emits when the user leaves a book.
+// emits when the user leaves a book. With QuickSync=true in the config,
+// NickelSync stops after the position sync. If it gets no position from the
+// server, or no book is open, it runs the full sync.
 //
 // Boot safety: the mod hooks no Nickel function. Until the first tap, it only
 // watches the trigger file. So a fault in this mod cannot run at boot after the
@@ -50,6 +52,11 @@ static const int START_TIMEOUT_MS = 20 * 1000;
 static const int SYNC_TIMEOUT_MS = 5 * 60 * 1000;
 // Delay after finished, so that Nickel can write LastSyncTime first.
 static const int SETTLE_MS = 3 * 1000;
+// QuickSync skips the full sync, so the run can end while Nickel still uploads
+// the position. This is the wait before Wi-Fi goes off again.
+// ponytail: a fixed wait. Nickel uploads in a worker thread that a mod cannot
+// watch without a hook. An upload that takes longer stops when Wi-Fi goes off.
+static const int UPLOAD_WAIT_MS = 15 * 1000;
 static const int TOAST_MS = 3000;
 
 typedef QObject N3SyncManager;
@@ -154,6 +161,7 @@ void NickelSync::trigger() {
     QSettings cfg(QStringLiteral(NS_CONFIG), QSettings::IniFormat);
     int connectTimeout = qBound(10, cfg.value("NickelSync/ConnectTimeout", 60).toInt(), 180);
     bool restoreWifi = cfg.value("NickelSync/RestoreWifi", true).toBool();
+    quickSync = cfg.value("NickelSync/QuickSync", false).toBool();
 
     WirelessWorkflowManager *wfm = WirelessWorkflowManager__sharedInstance();
     bool airplane = WirelessWorkflowManager__isAirplaneMode(wfm);
@@ -161,8 +169,8 @@ void NickelSync::trigger() {
     downloadStarted = false;
     position.clear();
     baseline = lastSyncTime();
-    log(QString("CONFIG: ConnectTimeout=%1 RestoreWifi=%2 wifi_off=%3 last_sync=%4")
-            .arg(connectTimeout).arg(restoreWifi).arg(airplane).arg(baseline.toString(Qt::ISODate)));
+    log(QString("CONFIG: ConnectTimeout=%1 RestoreWifi=%2 QuickSync=%3 wifi_off=%4 last_sync=%5")
+            .arg(connectTimeout).arg(restoreWifi).arg(quickSync).arg(airplane).arg(baseline.toString(Qt::ISODate)));
 
     if (WirelessManager__connected(WirelessManager__sharedInstance())) {
         startPull();
@@ -342,7 +350,17 @@ void NickelSync::onTimeout() {
         } else {
             push();
         }
-        startSync();
+        if (!quickSync) {
+            startSync();
+        } else {
+            log("QUICK: no full sync");
+            // push() always sets position, so it is empty only if the prompt shows.
+            finish(position.isEmpty() ? QStringLiteral("Reading position received") : position);
+        }
+        break;
+    case Uploading:
+        state = Idle;
+        restoreAirplaneMode();
         break;
     case Requested:
         // The syncStarted signal can be missing on some firmware.
@@ -367,8 +385,21 @@ void NickelSync::finish(QString const &result, QString const &detail) {
     toast(result, detail);
     timeout.stop();
     settle.stop();
-    state = Idle;
     view.clear();
+    // Only a quick sync finishes in the Checking state. Nickel can still be
+    // uploading the position, so wait before Wi-Fi goes off.
+    if (state == Checking && restoreAirplane) {
+        log("UPLOADING: waiting before Wi-Fi goes off");
+        state = Uploading;
+        timeout.start(UPLOAD_WAIT_MS);
+        return;
+    }
+    state = Idle;
+    restoreAirplaneMode();
+}
+
+// restoreAirplaneMode turns Wi-Fi off again if it was off before the sync.
+void NickelSync::restoreAirplaneMode() {
     // Do not turn Wi-Fi off while Nickel syncs or downloads books.
     if (restoreAirplane && !downloadStarted && !SyncManagerBase__isSyncing(N3SyncManager__sharedInstance())) {
         log("WIFI: turning Wi-Fi off again");

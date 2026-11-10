@@ -41,6 +41,9 @@ NickelSync shows a short message for each step. The messages show at the top of 
 | Sync done | The sync finished, and Nickel updated its last sync time. |
 | Sync done, Reading position sent | Inside a book: NickelSync also sent the position of the open book to the server. |
 | Sync done, Reading position not synced | Inside a book: NickelSync did not get the position from the server, so it did not send the position. See [Reading position](#reading-position). |
+| Reading position sent | `QuickSync` inside a book: NickelSync sent the position of the open book and skipped the full sync. |
+| Reading position received | `QuickSync` inside a book: the server has a newer position, and Nickel shows its prompt. NickelSync skipped the full sync. |
+| Reading position not synced | `QuickSync` inside a book: NickelSync could not send the position. |
 | Sync not confirmed | The sync finished, but Nickel did not update its last sync time. The sync can have failed. Check the result on the server. |
 | Sync did not start | Nickel did not start a sync within 20 seconds. |
 | Sync timed out | The sync did not finish within 5 minutes. |
@@ -61,11 +64,21 @@ NickelSync does not send the Kobo position while the prompt is open. If no promp
 
 The order matters. If the Kobo sent its position first, the server would never have a newer position, and the prompt would never show.
 
+### Quick sync
+
+Set `QuickSync=true` in the [configuration](#configuration) to sync only the reading position inside a book. NickelSync then gets the position and sends it, or Nickel shows its prompt. NickelSync does not run the full sync, so the sync ends sooner.
+
+In these cases NickelSync runs the full sync as usual, also with `QuickSync=true`:
+
+- No book is open, for example on the home screen.
+- The server does not send the position within 20 seconds, for example for a sideloaded book.
+
 Limits:
 
 - The position sync works for kepub books that Nickel syncs with the server. Nickel does not sync the position of a sideloaded book. For such a book, NickelSync waits 20 seconds for the server, then runs the full sync only.
 - If the server does not answer, NickelSync does not send the position. This keeps a newer position from another device on the server.
 - Nickel itself sends the position when you leave the book or connect USB. So after you cancel the prompt, the Kobo position goes to the server when you leave the book.
+- With `QuickSync`, NickelSync cannot see when Nickel finishes the upload. If `RestoreWifi` turns Wi-Fi off again, NickelSync first waits 15 seconds. During this wait, **Sync now** shows "Sync already running".
 
 ## Configuration
 
@@ -79,6 +92,8 @@ In kpm, open NickelSync and tap **Settings** to create and edit the file.
 ConnectTimeout=60
 ; If Wi-Fi was off before the sync, turn it off again after the sync.
 RestoreWifi=true
+; Inside a book, sync only the reading position and skip the full sync.
+QuickSync=false
 ```
 
 `RestoreWifi` does not turn Wi-Fi off if Nickel starts to download books after the sync.
@@ -110,7 +125,7 @@ NickelSync is a [NickelHook](https://github.com/pgaskin/NickelHook) mod. When th
 2. If a kepub book is open, it gets the position from the server. It finds the `ReadingView` with `MainWindowController::viewWithObjectName()` and the reader child that inherits `KepubBookReaderBase`. It invokes the reader slot `onResume()`, which Nickel also calls when the device wakes. Nickel then sends `GET .../state` and shows the prompt if the server is newer.
 3. It waits for the `bookmarkRequestSuccess(Volume)` signal of the sync manager, then 1.5 seconds more. If a `ConfirmationDialog` is visible, it does not send the position.
 4. If no prompt is visible, it emits the `ReadingView` signals `saveBookmark()` and `sendBookmark(Volume)`. Nickel emits the same two signals when you leave a book. Nickel then sends `PUT .../state`.
-5. It calls `N3SyncManager::silentSync()`.
+5. It calls `N3SyncManager::silentSync()`. With `QuickSync=true`, it stops before this step if it got the position in step 3.
 6. It reads the `syncStarted`, `finished` and `downloadStarted` signals of the sync manager.
 7. After `finished`, it compares `ApplicationPreferences/LastSyncTime` in `Kobo eReader.conf` with the value before the sync.
 
