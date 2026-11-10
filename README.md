@@ -32,7 +32,7 @@ Without kpm:
 
 Open the NickelMenu menu in a book, or the main NickelMenu menu, and tap **Sync now**.
 
-NickelSync shows a short message for each step:
+NickelSync shows a short message for each step. The messages show at the top of the screen, so they do not cover a Nickel prompt in the center:
 
 | Message | Meaning |
 |---|---|
@@ -65,7 +65,6 @@ Limits:
 
 - The position sync works for kepub books that Nickel syncs with the server. Nickel does not sync the position of a sideloaded book. For such a book, NickelSync waits 20 seconds for the server, then runs the full sync only.
 - If the server does not answer, NickelSync does not send the position. This keeps a newer position from another device on the server.
-- The "Syncing" and "Sync done" messages show over the prompt. The prompt stays open until you tap a button.
 - Nickel itself sends the position when you leave the book or connect USB. So after you cancel the prompt, the Kobo position goes to the server when you leave the book.
 
 ## Configuration
@@ -114,6 +113,8 @@ NickelSync is a [NickelHook](https://github.com/pgaskin/NickelHook) mod. When th
 5. It calls `N3SyncManager::silentSync()`.
 6. It reads the `syncStarted`, `finished` and `downloadStarted` signals of the sync manager.
 7. After `finished`, it compares `ApplicationPreferences/LastSyncTime` in `Kobo eReader.conf` with the value before the sync.
+
+Nickel shows each message in an `N3ToastView` window in the center of the screen. While a NickelSync message waits to show, NickelSync installs an application event filter. When an `N3ToastView` shows with a NickelSync text, the filter moves the window to the top. The move comes before Nickel draws the window. Nickel's own messages stay in the center.
 
 [Kobo AutoSync](https://github.com/kroshka4aplin/kobo-autosync) showed the `silentSync()` call and this result model.
 

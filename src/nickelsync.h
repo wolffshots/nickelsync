@@ -5,6 +5,7 @@
 #include <QElapsedTimer>
 #include <QObject>
 #include <QPointer>
+#include <QStringList>
 #include <QTimer>
 #include <QWidget>
 
@@ -19,6 +20,7 @@ class NickelSync : public QObject {
 public:
     explicit NickelSync(QObject *parent = nullptr);
     void trigger();
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 private Q_SLOTS:
     void onConnected();
@@ -50,6 +52,7 @@ private:
     QDateTime baseline;
     QPointer<QWidget> view; // the ReadingView of the open book
     QString position;       // the reading position result, for the last toast
+    QStringList toasts;     // the main texts of toasts that Nickel did not show yet
     QTimer timeout;
     QTimer settle;
     QElapsedTimer lastTrigger;

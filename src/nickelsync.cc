@@ -20,6 +20,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileSystemWatcher>
+#include <QLabel>
 #include <QSettings>
 #include <QString>
 #include <QStringList>
@@ -378,8 +379,35 @@ void NickelSync::finish(QString const &result, QString const &detail) {
 
 void NickelSync::toast(QString const &main, QString const &sub) {
     MainWindowController *mwc = MainWindowController__sharedInstance();
-    if (mwc)
-        MainWindowController__toast(mwc, main, sub, TOAST_MS);
+    if (!mwc)
+        return;
+    // Nickel shows one toast at a time. If a toast is on the screen, Nickel
+    // shows this one later. eventFilter moves it when it shows.
+    toasts << main;
+    QApplication::instance()->installEventFilter(this);
+    MainWindowController__toast(mwc, main, sub, TOAST_MS);
+}
+
+// eventFilter moves each NickelSync toast to the top of the screen before
+// Nickel draws it. Nickel centers a toast, so it covers the centered "Sync to
+// last page read?" prompt. The filter is on the application only while a
+// NickelSync toast waits to show.
+bool NickelSync::eventFilter(QObject *obj, QEvent *event) {
+    if (event->type() != QEvent::Show || !obj->inherits("N3ToastView"))
+        return false;
+    // N3ToasterController::displayToast() makes the toast a top-level window,
+    // centers it with move() and then calls show(). Qt sends the show event
+    // before the window shows, so this move comes before the first draw.
+    QWidget *toastView = qobject_cast<QWidget *>(obj);
+    QLabel *text = toastView ? toastView->findChild<QLabel *>(QStringLiteral("primaryText")) : nullptr;
+    // A toast of Nickel itself stays in the center.
+    if (text && toasts.removeOne(text->text())) {
+        toastView->move(toastView->x(), toastView->x() / 2); // the top gap is half the side gap
+        log("TOAST_MOVED: " + text->text());
+    }
+    if (toasts.isEmpty())
+        QApplication::instance()->removeEventFilter(this);
+    return false;
 }
 
 void NickelSync::log(QString const &line) {
