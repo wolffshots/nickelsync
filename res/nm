@@ -1,0 +1,5 @@
+# NickelSync: connect to Wi-Fi and start a Kobo sync.
+# kpm and the NickelSync uninstall replace or delete this file. Put your own
+# menu items in another file in this folder.
+menu_item :reader :Sync now :cmd_spawn :quiet:echo > /tmp/nickelsync
+menu_item :main   :Sync now :cmd_spawn :quiet:echo > /tmp/nickelsync

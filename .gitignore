@@ -1,0 +1,8 @@
+/KoboRoot.tgz
+/libnickelsync.so
+/SHA256SUMS
+/src/*.o
+/src/*.moc
+.vscode/
+.cache/
+compile_commands.json
