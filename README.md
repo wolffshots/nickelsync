@@ -36,8 +36,7 @@ NickelSync shows a short message for each step:
 | Connecting to Wi-Fi | Wi-Fi was not connected. NickelSync connects it. |
 | Syncing | NickelSync asked Nickel to sync. |
 | Sync done | The sync finished, and Nickel updated its last sync time. |
-| Sync finished | The sync finished, but Nickel did not update its last sync time. Check the result on the server. |
-| Sync failed | Nickel reported a failed sync. |
+| Sync not confirmed | The sync finished, but Nickel did not update its last sync time. The sync can have failed. Check the result on the server. |
 | Sync did not start | Nickel did not start a sync within 20 seconds. |
 | Sync timed out | The sync did not finish within 5 minutes. |
 | Could not connect to Wi-Fi | The Wi-Fi connection failed. |
@@ -88,10 +87,18 @@ NickelSync is a [NickelHook](https://github.com/pgaskin/NickelHook) mod. When th
 1. If Wi-Fi is not connected, it calls `WirelessWorkflowManager::connectWirelessSilently()`. It then waits for the `networkConnected()` signal.
 2. It calls `N3SyncManager::silentSync()`.
 3. It reads the `syncStarted`, `finished` and `downloadStarted` signals of the sync manager.
-4. An optional hook on `SyncManagerBase::fail()` records a failed sync.
-5. After `finished`, it compares `ApplicationPreferences/LastSyncTime` in `Kobo eReader.conf` with the value before the sync.
+4. After `finished`, it compares `ApplicationPreferences/LastSyncTime` in `Kobo eReader.conf` with the value before the sync.
 
 [Kobo AutoSync](https://github.com/kroshka4aplin/kobo-autosync) showed the `silentSync()` call and this result model.
+
+## Safety
+
+NickelSync is designed so that it cannot stop the device from booting:
+
+- **No hooks.** NickelSync replaces no Nickel function. Before the first tap on **Sync now**, it only watches `/tmp/nickelsync`.
+- **Missing symbols.** If the firmware does not have a required Nickel function, NickelHook does not load the mod. Nickel starts as usual without it.
+- **Crash at load.** If Nickel crashes within 15 seconds after it loads the mod, the NickelHook failsafe keeps the mod disabled on the next boot.
+- **Uninstall without the menu.** Connect the device over USB, delete `KOBOeReader/.adds/nickelsync/uninstall` and reboot.
 
 ## Build
 

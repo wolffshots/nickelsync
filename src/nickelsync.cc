@@ -1,8 +1,12 @@
 // NickelSync: start a native Kobo sync from a NickelMenu item, also inside a
 // book. The sync call is N3SyncManager::silentSync(), the same call that Kobo
 // AutoSync uses (github.com/kroshka4aplin/kobo-autosync, MIT). The result
-// tracking follows the same model: Nickel sync signals, the SyncManagerBase::fail
-// hook, and the LastSyncTime value in Kobo eReader.conf.
+// tracking uses Nickel sync signals and the LastSyncTime value in
+// Kobo eReader.conf.
+//
+// Boot safety: the mod hooks no Nickel function. Until the first tap, it only
+// watches the trigger file. So a fault in this mod cannot run at boot after the
+// NickelHook failsafe window, and cannot cause a boot loop.
 
 #include <QDir>
 #include <QFile>
@@ -40,7 +44,6 @@ typedef QObject MainWindowController;
 static N3SyncManager *(*N3SyncManager__sharedInstance)();
 static void (*N3SyncManager__silentSync)(N3SyncManager *);
 static bool (*SyncManagerBase__isSyncing)(N3SyncManager const *);
-static void (*SyncManagerBase__fail)(QObject *);
 
 static WirelessManager *(*WirelessManager__sharedInstance)();
 static bool (*WirelessManager__connected)(WirelessManager *);
@@ -75,8 +78,8 @@ bool NickelSync::wire() {
         return true;
     QObject *sync = N3SyncManager__sharedInstance();
     QObject *wm = WirelessManager__sharedInstance();
-    if (!sync || !wm) {
-        log("ERROR: could not get the sync or wireless manager");
+    if (!sync || !wm || !WirelessWorkflowManager__sharedInstance()) {
+        log("ERROR: could not get the sync or wireless managers");
         return false;
     }
     // A failed connect is not fatal. The timeouts still end each attempt.
@@ -128,7 +131,6 @@ void NickelSync::trigger() {
     bool airplane = WirelessWorkflowManager__isAirplaneMode(wfm);
     restoreAirplane = restoreWifi && airplane;
     downloadStarted = false;
-    failed = false;
     baseline = lastSyncTime();
     log(QString("CONFIG: ConnectTimeout=%1 RestoreWifi=%2 wifi_off=%3 last_sync=%4")
             .arg(connectTimeout).arg(restoreWifi).arg(airplane).arg(baseline.toString(Qt::ISODate)));
@@ -192,13 +194,6 @@ void NickelSync::onDownloadStarted() {
     downloadStarted = true;
 }
 
-void NickelSync::syncFailed(QObject *manager) {
-    if (manager != N3SyncManager__sharedInstance() || (state != Requested && state != Running))
-        return;
-    log("FAIL: SyncManagerBase::fail");
-    failed = true;
-}
-
 void NickelSync::onSettled() {
     if (state != Settling)
         return;
@@ -206,10 +201,8 @@ void NickelSync::onSettled() {
     log("LAST_SYNC: " + stamp.toString(Qt::ISODate));
     if (stamp.isValid() && (!baseline.isValid() || stamp > baseline))
         finish("Sync done");
-    else if (failed)
-        finish("Sync failed");
     else
-        finish("Sync finished");
+        finish("Sync not confirmed", "Nickel did not update its last sync time");
 }
 
 void NickelSync::onTimeout() {
@@ -224,7 +217,7 @@ void NickelSync::onTimeout() {
             state = Running;
             timeout.start(SYNC_TIMEOUT_MS);
         } else {
-            finish(failed ? "Sync failed" : "Sync did not start");
+            finish("Sync did not start");
         }
         break;
     case Running:
@@ -235,9 +228,9 @@ void NickelSync::onTimeout() {
     }
 }
 
-void NickelSync::finish(QString const &result) {
+void NickelSync::finish(QString const &result, QString const &detail) {
     log("RESULT: " + result);
-    toast(result);
+    toast(result, detail);
     timeout.stop();
     settle.stop();
     state = Idle;
@@ -264,12 +257,6 @@ void NickelSync::log(QString const &line) {
 }
 
 // ---- NickelHook --------------------------------------------------------
-
-extern "C" __attribute__((visibility("default"))) void nickelsync_fail(QObject *self) {
-    if (controller)
-        controller->syncFailed(self);
-    SyncManagerBase__fail(self);
-}
 
 static int nickelsync_init() {
     controller = new NickelSync();
@@ -310,8 +297,7 @@ static struct nh_info NickelSyncInfo = (struct nh_info){
 
 // clang-format off
 static struct nh_hook NickelSyncHook[] = {
-    // Optional: without it, a failed sync shows "Sync finished".
-    { .sym = "_ZN15SyncManagerBase4failEv", .sym_new = "nickelsync_fail", .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(SyncManagerBase__fail), .desc = "SyncManagerBase::fail()", .optional = true },
+    // No hooks on purpose. See the boot safety note at the top of this file.
     {0},
 };
 

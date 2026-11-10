@@ -16,7 +16,6 @@ class NickelSync : public QObject {
 public:
     explicit NickelSync(QObject *parent = nullptr);
     void trigger();
-    void syncFailed(QObject *manager);
 
 private Q_SLOTS:
     void onConnected();
@@ -32,7 +31,7 @@ private:
 
     bool wire();
     void startSync();
-    void finish(QString const &result);
+    void finish(QString const &result, QString const &detail = QString());
     void toast(QString const &main, QString const &sub = QString());
     void log(QString const &line);
 
@@ -40,7 +39,6 @@ private:
     bool wired = false;
     bool restoreAirplane = false;
     bool downloadStarted = false;
-    bool failed = false;
     QDateTime baseline;
     QTimer timeout;
     QTimer settle;
