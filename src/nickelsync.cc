@@ -4,10 +4,19 @@
 // tracking uses Nickel sync signals and the LastSyncTime value in
 // Kobo eReader.conf.
 //
+// The full sync does not send or get the position of the open book. Nickel
+// sends it only when the user leaves the book. So inside a book, NickelSync
+// first gets the position from the server through the reader slot onResume().
+// Nickel then shows its "Sync to last page read?" prompt if the server is
+// newer. If no prompt shows, NickelSync sends the position with the
+// ReadingView signals saveBookmark() and sendBookmark(Volume), which Nickel
+// emits when the user leaves a book.
+//
 // Boot safety: the mod hooks no Nickel function. Until the first tap, it only
 // watches the trigger file. So a fault in this mod cannot run at boot after the
 // NickelHook failsafe window, and cannot cause a boot loop.
 
+#include <QApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileSystemWatcher>
@@ -28,6 +37,12 @@
 #define NS_TRIGGER   "/tmp/nickelsync"
 #define NICKEL_CONF  "/mnt/onboard/.kobo/Kobo/Kobo eReader.conf"
 
+// Time for the server to answer the reading state request. Nickel sends no
+// request for a book that it does not sync, for example a sideloaded book.
+static const int PULL_TIMEOUT_MS = 20 * 1000;
+// Delay after the answer, before the check for the prompt. Nickel opens the
+// prompt in the same call chain as the answer, so a short delay is enough.
+static const int PROMPT_WAIT_MS = 1500;
 // Time for Nickel to emit syncStarted after the silentSync call.
 static const int START_TIMEOUT_MS = 20 * 1000;
 // Time for a started sync to emit finished.
@@ -55,6 +70,10 @@ static void (*WirelessWorkflowManager__setAirplaneMode)(WirelessWorkflowManager 
 
 static MainWindowController *(*MainWindowController__sharedInstance)();
 static void (*MainWindowController__toast)(MainWindowController *, QString const &, QString const &, int);
+
+// Optional. If a firmware lacks them, NickelSync only runs the full sync.
+static QWidget *(*MainWindowController__viewWithObjectName)(MainWindowController const *, QString const &);
+static void const *(*ReadingView__getVolume)(void const *); // returns Volume const&
 
 static NickelSync *controller = nullptr;
 
@@ -97,6 +116,11 @@ bool NickelSync::wire() {
         missing << "finished";
     if (!connect(sync, SIGNAL(downloadStarted(Volume)), this, SLOT(onDownloadStarted())))
         missing << "downloadStarted";
+    // The reader listens to the same signal. This connection is older, so
+    // onPositionReceived runs before Nickel decides about the prompt.
+    pullWired = connect(sync, SIGNAL(bookmarkRequestSuccess(Volume)), this, SLOT(onPositionReceived()));
+    if (!pullWired)
+        missing << "bookmarkRequestSuccess";
     if (!missing.isEmpty())
         log("WARN: signals not connected: " + missing.join(", "));
     wired = true;
@@ -134,12 +158,13 @@ void NickelSync::trigger() {
     bool airplane = WirelessWorkflowManager__isAirplaneMode(wfm);
     restoreAirplane = restoreWifi && airplane;
     downloadStarted = false;
+    position.clear();
     baseline = lastSyncTime();
     log(QString("CONFIG: ConnectTimeout=%1 RestoreWifi=%2 wifi_off=%3 last_sync=%4")
             .arg(connectTimeout).arg(restoreWifi).arg(airplane).arg(baseline.toString(Qt::ISODate)));
 
     if (WirelessManager__connected(WirelessManager__sharedInstance())) {
-        startSync();
+        startPull();
         return;
     }
     state = Connecting;
@@ -151,10 +176,100 @@ void NickelSync::trigger() {
     timeout.start(connectTimeout * 1000);
 }
 
+// openBook returns the reader of the open book and sets view to its
+// ReadingView. It returns null if no kepub book is open.
+QObject *NickelSync::openBook() {
+    view.clear();
+    if (!pullWired || !MainWindowController__viewWithObjectName || !ReadingView__getVolume) {
+        log("BOOK: this firmware lacks the functions for the reading position");
+        return nullptr;
+    }
+    MainWindowController *mwc = MainWindowController__sharedInstance();
+    QWidget *rv = mwc ? MainWindowController__viewWithObjectName(mwc, QStringLiteral("ReadingView")) : nullptr;
+    // viewWithObjectName also finds a ReadingView below the current view.
+    if (!rv || !rv->isVisible() || !rv->inherits("ReadingView")) {
+        log("BOOK: no open book");
+        return nullptr;
+    }
+    for (QObject *child : rv->findChildren<QObject *>()) {
+        if (child->inherits("KepubBookReaderBase")) {
+            view = rv;
+            return child;
+        }
+    }
+    log("BOOK: the open book is not a kepub");
+    return nullptr;
+}
+
+// startPull gets the reading position before the push. A push first would
+// give the server the Kobo position with a new time, so the server would never
+// be newer and Nickel would never show the prompt.
+void NickelSync::startPull() {
+    QObject *reader = openBook();
+    if (!reader) {
+        startSync();
+        return;
+    }
+    state = Pulling;
+    log("PULLING: KepubBookReaderBase::onResume");
+    toast("Syncing");
+    timeout.start(PULL_TIMEOUT_MS);
+    // Nickel calls the same slot when the device wakes. It sends GET .../state.
+    if (!QMetaObject::invokeMethod(reader, "onResume", Qt::DirectConnection)) {
+        log("PULL_FAILED: onResume not found");
+        position = "Reading position not synced";
+        startSync();
+    }
+}
+
+void NickelSync::onPositionReceived() {
+    if (state != Pulling)
+        return;
+    log("PULLED: waiting for the prompt");
+    state = Checking;
+    timeout.start(PROMPT_WAIT_MS);
+}
+
+// promptVisible reports a visible Nickel confirmation dialog, such as "Sync to
+// last page read?" or "Finished this book?".
+static bool promptVisible() {
+    for (QWidget *w : QApplication::allWidgets())
+        if (w->isVisible() && w->inherits("ConfirmationDialog"))
+            return true;
+    return false;
+}
+
+// push emits the two ReadingView signals that Nickel emits when the user leaves
+// a book. saveBookmark() writes the current page to the database.
+// sendBookmark(Volume) sends it to the server with PUT .../state.
+void NickelSync::push() {
+    QWidget *rv = view.data();
+    // moc generates qt_metacast, so the ReadingView pointer is correct for any
+    // base class layout. On 4.46.23852 the QWidget base is at offset 0.
+    void *reading = rv ? rv->qt_metacast("ReadingView") : nullptr;
+    if (!reading) {
+        log("PUSH_SKIPPED: the book is closed");
+        position = "Reading position not synced";
+        return;
+    }
+    if (!QMetaObject::invokeMethod(rv, "saveBookmark", Qt::DirectConnection) ||
+        !QMetaObject::invokeMethod(rv, "sendBookmark", Qt::DirectConnection,
+                                   QGenericArgument("Volume", ReadingView__getVolume(reading)))) {
+        log("PUSH_FAILED: ReadingView signals not found");
+        position = "Reading position not synced";
+        return;
+    }
+    log("PUSHED: saveBookmark, sendBookmark");
+    position = "Reading position sent";
+}
+
 void NickelSync::startSync() {
+    // startPull already showed the toast.
+    bool pulled = state == Pulling || state == Checking;
     state = Requested;
     log("REQUESTING: N3SyncManager::silentSync");
-    toast("Syncing");
+    if (!pulled)
+        toast("Syncing");
     timeout.start(START_TIMEOUT_MS);
     N3SyncManager__silentSync(N3SyncManager__sharedInstance());
 }
@@ -163,7 +278,7 @@ void NickelSync::onConnected() {
     if (state != Connecting)
         return;
     log("CONNECTED");
-    startSync();
+    startPull();
 }
 
 void NickelSync::onConnectFailed() {
@@ -203,7 +318,7 @@ void NickelSync::onSettled() {
     QDateTime stamp = lastSyncTime();
     log("LAST_SYNC: " + stamp.toString(Qt::ISODate));
     if (stamp.isValid() && (!baseline.isValid() || stamp > baseline))
-        finish("Sync done");
+        finish("Sync done", position);
     else
         finish("Sync not confirmed", "Nickel did not update its last sync time");
 }
@@ -212,6 +327,21 @@ void NickelSync::onTimeout() {
     switch (state) {
     case Connecting:
         finish("Wi-Fi connection timed out");
+        break;
+    case Pulling:
+        // Without the server position, a push could replace a newer position
+        // from another device. So do not push.
+        log("PULL_TIMEOUT: no reading state from the server, no push");
+        position = "Reading position not synced";
+        startSync();
+        break;
+    case Checking:
+        if (promptVisible()) {
+            log("PROMPT: the server has a newer position, no push");
+        } else {
+            push();
+        }
+        startSync();
         break;
     case Requested:
         // The syncStarted signal can be missing on some firmware.
@@ -237,6 +367,7 @@ void NickelSync::finish(QString const &result, QString const &detail) {
     timeout.stop();
     settle.stop();
     state = Idle;
+    view.clear();
     // Do not turn Wi-Fi off while Nickel syncs or downloads books.
     if (restoreAirplane && !downloadStarted && !SyncManagerBase__isSyncing(N3SyncManager__sharedInstance())) {
         log("WIFI: turning Wi-Fi off again");
@@ -316,6 +447,8 @@ static struct nh_dlsym NickelSyncDlsym[] = {
     { .name = "_ZN23WirelessWorkflowManager15setAirplaneModeEb",             .out = nh_symoutptr(WirelessWorkflowManager__setAirplaneMode) },
     { .name = "_ZN20MainWindowController14sharedInstanceEv",                 .out = nh_symoutptr(MainWindowController__sharedInstance) },
     { .name = "_ZN20MainWindowController5toastERK7QStringS2_i",              .out = nh_symoutptr(MainWindowController__toast) },
+    { .name = "_ZNK20MainWindowController18viewWithObjectNameERK7QString",   .out = nh_symoutptr(MainWindowController__viewWithObjectName), .desc = "reading position sync", .optional = true },
+    { .name = "_ZNK11ReadingView9getVolumeEv",                               .out = nh_symoutptr(ReadingView__getVolume),                   .desc = "reading position sync", .optional = true },
     {0},
 };
 // clang-format on

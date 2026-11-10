@@ -9,6 +9,7 @@ override SOURCES  += src/nickelsync.cc
 override CFLAGS   += -Wall -Wextra -Werror -Wno-missing-field-initializers -fvisibility=hidden
 override CXXFLAGS += -Wall -Wextra -Werror -Wno-missing-field-initializers -fvisibility=hidden -fvisibility-inlines-hidden
 override MOCS     += src/nickelsync.h
+override PKGCONF  += Qt5Widgets
 override KOBOROOT += res/nm:/mnt/onboard/.adds/nm/nickelsync
 override KOBOROOT += res/uninstall:/mnt/onboard/.adds/nickelsync/uninstall
 
