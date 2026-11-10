@@ -64,6 +64,9 @@ static QDateTime lastSyncTime() {
 }
 
 NickelSync::NickelSync(QObject *parent) : QObject(parent) {
+    // QElapsedTimer has no constructor in Qt 5.2. Without this call it holds
+    // heap garbage, and trigger() can ignore every tap as a repeat.
+    lastTrigger.invalidate();
     timeout.setSingleShot(true);
     settle.setSingleShot(true);
     settle.setInterval(SETTLE_MS);
