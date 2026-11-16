@@ -1,6 +1,6 @@
-// NickelSync: start a native Kobo sync from a NickelMenu item, also inside a
-// book. The sync call is N3SyncManager::silentSync(), the same call that Kobo
-// AutoSync uses (github.com/kroshka4aplin/kobo-autosync, MIT). The result
+// NickelSync: start a native Kobo sync from a page that an icon in the reading
+// menu opens, or from a NickelMenu item. The sync call is
+// N3SyncManager::silentSync(), the same call that Kobo AutoSync uses (github.com/kroshka4aplin/kobo-autosync, MIT). The result
 // tracking uses Nickel sync signals and the LastSyncTime value in
 // Kobo eReader.conf.
 //
@@ -14,19 +14,30 @@
 // NickelSync stops after the position sync. If it gets no position from the
 // server, or no book is open, it runs the full sync.
 //
-// Boot safety: the mod hooks no Nickel function. Until the first tap, it only
-// watches the trigger file. So a fault in this mod cannot run at boot after the
-// NickelHook failsafe window, and cannot cause a boot loop.
+// The icon: an application event filter waits for the show event of the
+// ReadingMenuView. Then it puts a TouchLabel into the bottomHorizontalLayout
+// bar, before the settingsIcon, as NickelHardcover does. On 4.46 that bar is
+// the top bar of the reading menu, and settingsIcon is the overflow icon. A
+// tap opens the NickelSync page, a full-screen N3Dialog.
+//
+// Boot safety: the mod hooks no Nickel function. Until a reading menu shows,
+// it only watches the trigger file and checks the type of each Qt event in the
+// event filter. So a fault in this mod cannot run at boot after the NickelHook
+// failsafe window, and cannot cause a boot loop.
 
 #include <QApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileSystemWatcher>
+#include <QHBoxLayout>
 #include <QLabel>
+#include <QPixmap>
+#include <QScreen>
 #include <QSettings>
 #include <QString>
 #include <QStringList>
 #include <QTextStream>
+#include <QVBoxLayout>
 
 #include <NickelHook.h>
 
@@ -59,6 +70,10 @@ static const int SETTLE_MS = 3 * 1000;
 static const int UPLOAD_WAIT_MS = 15 * 1000;
 static const int TOAST_MS = 3000;
 
+// The icon uses the Nickel status bar sync image.
+#define NS_ICON      "nickelsyncIcon"
+#define NS_PIX       ":/images/statusbar/sync.png"
+
 typedef QObject N3SyncManager;
 typedef QObject WirelessManager;
 typedef QObject WirelessWorkflowManager;
@@ -82,6 +97,15 @@ static void (*MainWindowController__toast)(MainWindowController *, QString const
 // Optional. If a firmware lacks them, NickelSync only runs the full sync.
 static QWidget *(*MainWindowController__viewWithObjectName)(MainWindowController const *, QString const &);
 static void const *(*ReadingView__getVolume)(void const *); // returns Volume const&
+
+// Optional. If a firmware lacks them, the reading menu has no NickelSync icon.
+// The object sizes are the sizes that NickelHardcover allocates.
+static void (*TouchLabel__constructor)(QLabel *, QWidget *, QFlags<Qt::WindowType>);
+static void (*TouchLabel__setHitStateEnabled)(QLabel *, bool);
+static void (*N3ButtonLabel__constructor)(QLabel *, QWidget *);
+static QWidget *(*N3DialogFactory__getDialog)(QWidget *, bool);
+static void (*N3Dialog__setTitle)(QWidget *, QString const &);
+static QWidget *(*MainWindowController__pushView)(MainWindowController *, QWidget *);
 
 static NickelSync *controller = nullptr;
 
@@ -135,7 +159,7 @@ bool NickelSync::wire() {
     return true;
 }
 
-void NickelSync::trigger() {
+void NickelSync::trigger(Mode mode) {
     // inotify can deliver one write as several events.
     if (lastTrigger.isValid() && lastTrigger.elapsed() < 1000)
         return;
@@ -161,7 +185,7 @@ void NickelSync::trigger() {
     QSettings cfg(QStringLiteral(NS_CONFIG), QSettings::IniFormat);
     int connectTimeout = qBound(10, cfg.value("NickelSync/ConnectTimeout", 60).toInt(), 180);
     bool restoreWifi = cfg.value("NickelSync/RestoreWifi", true).toBool();
-    quickSync = cfg.value("NickelSync/QuickSync", false).toBool();
+    quickSync = mode == FromConfig ? cfg.value("NickelSync/QuickSync", false).toBool() : mode == Quick;
 
     WirelessWorkflowManager *wfm = WirelessWorkflowManager__sharedInstance();
     bool airplane = WirelessWorkflowManager__isAirplaneMode(wfm);
@@ -382,6 +406,7 @@ void NickelSync::onTimeout() {
 
 void NickelSync::finish(QString const &result, QString const &detail) {
     log("RESULT: " + result);
+    lastResult = detail.isEmpty() ? result : result + ", " + detail;
     toast(result, detail);
     timeout.stop();
     settle.stop();
@@ -415,17 +440,144 @@ void NickelSync::toast(QString const &main, QString const &sub) {
     // Nickel shows one toast at a time. If a toast is on the screen, Nickel
     // shows this one later. eventFilter moves it when it shows.
     toasts << main;
-    QApplication::instance()->installEventFilter(this);
     MainWindowController__toast(mwc, main, sub, TOAST_MS);
 }
 
-// eventFilter moves each NickelSync toast to the top of the screen before
-// Nickel draws it. Nickel centers a toast, so it covers the centered "Sync to
-// last page read?" prompt. The filter is on the application only while a
-// NickelSync toast waits to show.
+// eventFilter is on the application from init. It acts only on show events:
+// it adds the icon to a reading menu, and it moves NickelSync toasts.
 bool NickelSync::eventFilter(QObject *obj, QEvent *event) {
-    if (event->type() != QEvent::Show || !obj->inherits("N3ToastView"))
+    if (event->type() != QEvent::Show)
         return false;
+    if (obj->inherits("ReadingMenuView"))
+        addIcon(qobject_cast<QWidget *>(obj));
+    else if (!toasts.isEmpty() && obj->inherits("N3ToastView"))
+        moveToast(obj);
+    return false;
+}
+
+// addIcon puts the NickelSync icon into the bottomHorizontalLayout bar of the
+// reading menu, before the last icon. NickelHardcover finds the bar and
+// inserts its icon in the same way. On 4.46 this bar is the lower row of the
+// header, at the top of the screen. settingsIcon is the gear, and the last
+// icon is the overflow icon. So the mod icons stay together, between the gear
+// and the overflow icon. The menu shows many times, so addIcon adds the icon
+// only once.
+void NickelSync::addIcon(QWidget *menuView) {
+    if (!menuView || !TouchLabel__constructor || !TouchLabel__setHitStateEnabled || !N3ButtonLabel__constructor ||
+        !N3DialogFactory__getDialog || !N3Dialog__setTitle || !MainWindowController__pushView)
+        return;
+    QWidget *root = menuView->parentWidget() ? menuView->parentWidget() : menuView;
+    if (root->findChild<QLabel *>(QStringLiteral(NS_ICON)))
+        return;
+    QHBoxLayout *bar = root->findChild<QHBoxLayout *>(QStringLiteral("bottomHorizontalLayout"));
+    QLabel *settings = root->findChild<QLabel *>(QStringLiteral("settingsIcon"));
+    // The settingsIcon check makes sure that this is the bar of the icons.
+    // NickelSync uses settingsIcon only for the icon height.
+    if (!bar || !settings || bar->indexOf(settings) < 0) {
+        nh_log("NickelSync: ICON: bottomHorizontalLayout or settingsIcon not found");
+        return;
+    }
+    // A widget in a layout has no final size before the first show, so use
+    // the size of the settings image.
+    int height = settings->pixmap() ? settings->pixmap()->height() : settings->height();
+
+    QLabel *icon = reinterpret_cast<QLabel *>(calloc(1, 128));
+    TouchLabel__constructor(icon, settings->parentWidget(), 0);
+    TouchLabel__setHitStateEnabled(icon, false);
+    icon->setObjectName(QStringLiteral(NS_ICON));
+    icon->setPixmap(QPixmap(QStringLiteral(NS_PIX)).scaledToHeight(height, Qt::SmoothTransformation));
+    connect(icon, SIGNAL(tapped(bool)), this, SLOT(showPage()));
+    int index = bar->count() - 1;
+    bar->insertWidget(index, icon);
+    nh_log("NickelSync: ICON: added at index %d, height %d", index, height);
+}
+
+// pageLabel adds a label with an object name for the page style sheet.
+static QLabel *pageLabel(QVBoxLayout *layout, char const *name, QString const &text) {
+    QLabel *l = new QLabel(text);
+    l->setObjectName(QString::fromLatin1(name));
+    l->setWordWrap(true);
+    layout->addWidget(l);
+    return l;
+}
+
+// showPage opens the NickelSync page over the book. It follows the Dialog
+// class of NickelHardcover: Nickel draws the title and the close button.
+void NickelSync::showPage() {
+    if (page)
+        return;
+    QWidget *icon = qobject_cast<QWidget *>(sender());
+    // On the device the window of the icon is the main window, which fills the
+    // screen. The sim window is smaller than its desktop screen.
+    QSize screen = icon ? icon->window()->size() : QApplication::primaryScreen()->geometry().size();
+    // Sizes in pixels for a 1264 pixel wide screen (Libra 2, Libra Colour),
+    // as in the Label sizes of kpm.
+    auto px = [screen](int at1264) { return at1264 * screen.width() / 1264; };
+
+    QWidget *content = new QWidget();
+    content->setStyleSheet(QStringLiteral("QLabel#nsKey { font-size: %1px; color: #666666; }"
+                                          "QLabel#nsValue { font-size: %2px; }"
+                                          "QLabel#nsDesc { font-size: %1px; }")
+                               .arg(px(30))
+                               .arg(px(38)));
+    QVBoxLayout *l = new QVBoxLayout(content);
+    l->setContentsMargins(px(75), px(40), px(75), px(40));
+    l->setSpacing(px(12));
+
+    QDateTime last = lastSyncTime();
+    pageLabel(l, "nsKey", QStringLiteral("Last sync"));
+    pageLabel(l, "nsValue", last.isValid() ? last.toString(QStringLiteral("d MMMM yyyy, HH:mm")) : QStringLiteral("Never"));
+    l->addSpacing(px(24));
+    pageLabel(l, "nsKey", QStringLiteral("Last result"));
+    pageLabel(l, "nsValue", state != Idle             ? QStringLiteral("A sync is running")
+                            : lastResult.isEmpty() ? QStringLiteral("No sync since the last restart")
+                                                   : lastResult);
+
+    struct { char const *text; char const *desc; Mode mode; } buttons[] = {
+        {"Sync now", "Syncs the reading position of this book, then your library.", Full},
+        {"Sync reading position", "Syncs only the reading position of this book. Faster.", Quick},
+    };
+    for (auto const &b : buttons) {
+        l->addSpacing(px(56));
+        QLabel *button = reinterpret_cast<QLabel *>(calloc(1, 512));
+        N3ButtonLabel__constructor(button, content);
+        button->setProperty("primaryButton", true);
+        button->setProperty("nsMode", int(b.mode));
+        button->setText(QString::fromUtf8(b.text));
+        connect(button, SIGNAL(tapped(bool)), this, SLOT(onPageButton()));
+        l->addWidget(button, 0, Qt::AlignLeft);
+        pageLabel(l, "nsDesc", QString::fromUtf8(b.desc));
+    }
+    l->addStretch(1);
+
+    page = N3DialogFactory__getDialog(content, true);
+    N3Dialog__setTitle(page, QStringLiteral("NickelSync"));
+    page->setFixedSize(screen);
+    MainWindowController__pushView(MainWindowController__sharedInstance(), page);
+    connect(page, SIGNAL(closeTapped()), page, SLOT(deleteLater()));
+    page->show();
+    nh_log("NickelSync: PAGE: opened, %dx%d", screen.width(), screen.height());
+}
+
+// onPageButton closes the page and starts the sync when the page is gone. The
+// book is hidden below the page, and the reading position sync needs it
+// visible: openBook() checks it, and Nickel shows its prompt over it.
+void NickelSync::onPageButton() {
+    QObject *button = sender();
+    if (!button || !page)
+        return;
+    pending = Mode(button->property("nsMode").toInt());
+    // Queued, so that Nickel shows the book again before the sync starts.
+    connect(page, SIGNAL(destroyed()), this, SLOT(startPending()), Qt::QueuedConnection);
+    page->deleteLater();
+}
+
+void NickelSync::startPending() { trigger(pending); }
+
+// moveToast moves each NickelSync toast to the top of the screen before
+// Nickel draws it. Nickel centers a toast, so it covers the centered "Sync to
+// last page read?" prompt.
+void NickelSync::moveToast(QObject *obj) {
     // N3ToasterController::displayToast() makes the toast a top-level window,
     // centers it with move() and then calls show(). Qt sends the show event
     // before the window shows, so this move comes before the first draw.
@@ -436,9 +588,6 @@ bool NickelSync::eventFilter(QObject *obj, QEvent *event) {
         toastView->move(toastView->x(), toastView->x() / 2); // the top gap is half the side gap
         log("TOAST_MOVED: " + text->text());
     }
-    if (toasts.isEmpty())
-        QApplication::instance()->removeEventFilter(this);
-    return false;
 }
 
 void NickelSync::log(QString const &line) {
@@ -468,6 +617,12 @@ static int nickelsync_init() {
         controller->trigger();
     });
     nh_log("NickelSync: watching %s", NS_TRIGGER);
+
+    // Without the filter there is no icon, and the toasts stay in the center.
+    if (QCoreApplication *app = QCoreApplication::instance())
+        app->installEventFilter(controller);
+    else
+        nh_log("NickelSync: ERROR: no application, no icon");
     return 0;
 }
 
@@ -481,7 +636,7 @@ static bool nickelsync_uninstall() {
 
 static struct nh_info NickelSyncInfo = (struct nh_info){
     .name = "NickelSync",
-    .desc = "Start a native Kobo sync from a NickelMenu item",
+    .desc = "Start a native Kobo sync from the reading menu",
     .uninstall_flag = nullptr,
     // Delete this shipped file and reboot to uninstall.
     .uninstall_xflag = NS_XFLAG,
@@ -508,6 +663,12 @@ static struct nh_dlsym NickelSyncDlsym[] = {
     { .name = "_ZN20MainWindowController5toastERK7QStringS2_i",              .out = nh_symoutptr(MainWindowController__toast) },
     { .name = "_ZNK20MainWindowController18viewWithObjectNameERK7QString",   .out = nh_symoutptr(MainWindowController__viewWithObjectName), .desc = "reading position sync", .optional = true },
     { .name = "_ZNK11ReadingView9getVolumeEv",                               .out = nh_symoutptr(ReadingView__getVolume),                   .desc = "reading position sync", .optional = true },
+    { .name = "_ZN10TouchLabelC1EP7QWidget6QFlagsIN2Qt10WindowTypeEE",       .out = nh_symoutptr(TouchLabel__constructor),                  .desc = "reading menu icon", .optional = true },
+    { .name = "_ZN10TouchLabel18setHitStateEnabledEb",                       .out = nh_symoutptr(TouchLabel__setHitStateEnabled),           .desc = "reading menu icon", .optional = true },
+    { .name = "_ZN13N3ButtonLabelC1EP7QWidget",                              .out = nh_symoutptr(N3ButtonLabel__constructor),               .desc = "reading menu icon", .optional = true },
+    { .name = "_ZN15N3DialogFactory9getDialogEP7QWidgetb",                   .out = nh_symoutptr(N3DialogFactory__getDialog),               .desc = "reading menu icon", .optional = true },
+    { .name = "_ZN8N3Dialog8setTitleERK7QString",                            .out = nh_symoutptr(N3Dialog__setTitle),                       .desc = "reading menu icon", .optional = true },
+    { .name = "_ZN20MainWindowController8pushViewEP7QWidget",                .out = nh_symoutptr(MainWindowController__pushView),           .desc = "reading menu icon", .optional = true },
     {0},
 };
 // clang-format on
