@@ -24,7 +24,8 @@ extern void (*N3Dialog__setTitle)(QWidget *, QString const &);
 extern QObject *(*WirelessManager__sharedInstance)();
 extern bool (*WirelessManager__connected)(QObject *);
 
-// Content is a base class of Volume. Optional, for the Hardcover section.
+// Content is a base class of Volume. Optional, for the server stats and the
+// Hardcover page.
 extern QString (*Content__getId)(void const *);
 extern QString (*Content__getTitle)(void const *);
 extern QString (*Content__getAttribution)(void const *);

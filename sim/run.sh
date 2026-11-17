@@ -23,7 +23,7 @@ fi
 
 make -s -C "$SIM"
 
-# The Hardcover section talks to the mock server, at the port in the Makefile.
+# The Hardcover page talks to the mock server, at the port in the Makefile.
 python3 "$SIM/hcmock.py" 5931 &
 MOCK=$!
 trap 'kill $MOCK 2>/dev/null' EXIT
@@ -101,20 +101,21 @@ if [ "${1:-}" = "--all" ]; then
     run stats-wifi-fail     --pick none --wifi fail               --expect-stats error
     run stats-store         --pick none --stats store             --expect-stats none
     run stats-sideloaded    --pick none --book file               --expect-stats none
-    run hc-off              --wifi on --steps "absent:Sign in to Hardcover;absent:Load from Hardcover"
+    run hc-off              --wifi on --steps "absent:Hardcover"
     run hc-signin           --wifi on --hardcover signed-out \
-                            --steps "Sign in to Hardcover;expect:NKSY-2026;wait:3000;expect:Load from Hardcover"
+                            --steps "Hardcover;Sign in to Hardcover;expect:NKSY-2026;wait:3000;expect:Load from Hardcover"
     run hc-status           --wifi on --hardcover signed-in --isbn 9780000000001 \
-                            --steps "Load from Hardcover;expect:Currently Reading, 42%, page 160;Reading journal;expect:The light does not ask;Older;expect:Want to Read"
+                            --steps "Hardcover;Load from Hardcover;expect:Currently Reading, 42%, page 160;Reading journal;expect:The light does not ask;Older;expect:Want to Read"
     run hc-link             --wifi on --hardcover signed-in \
-                            --steps "Load from Hardcover;expect:not on Hardcover;Link book;More results;Previous;The Lighthouse Keeper's Daughter;expect:Want to Read;Unlink book;expect:Load from Hardcover"
+                            --steps "Hardcover;Load from Hardcover;expect:not on Hardcover;Link book;More results;Previous;The Lighthouse Keeper's Daughter;expect:Want to Read;Unlink book;expect:Load from Hardcover"
     run hc-empty            --wifi on --hardcover signed-in --isbn 9780000000002 \
-                            --steps "Load from Hardcover;expect:Not in your Hardcover library;Reading journal;expect:No journal entries"
+                            --steps "Hardcover;Load from Hardcover;expect:Not in your Hardcover library;Reading journal;expect:No journal entries"
     run hc-refresh          --wifi on --hardcover stale --isbn 9780000000001 \
-                            --steps "Load from Hardcover;expect:Currently Reading"
-    run hc-wifi-off         --hardcover signed-in --isbn 9780000000001 \
-                            --steps "Load from Hardcover;expect:Connect to Wi-Fi first."
-    run hc-signout          --wifi on --hardcover signed-in --steps "Sign out;expect:Sign in to Hardcover"
+                            --steps "Hardcover;Load from Hardcover;expect:Currently Reading"
+    # --stats store: the server stats do not connect Wi-Fi when the page opens.
+    run hc-wifi-off         --hardcover signed-in --isbn 9780000000001 --stats store \
+                            --steps "Hardcover;Load from Hardcover;expect:Connect to Wi-Fi first."
+    run hc-signout          --wifi on --hardcover signed-in --steps "Hardcover;Sign out;expect:Sign in to Hardcover"
     exit $rc
 fi
 

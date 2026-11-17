@@ -37,7 +37,7 @@ In a book, tap the center of the page to open the reading menu. Tap the sync ico
 | Sync now | Syncs the reading position, then runs the full sync. The `QuickSync` setting does not apply. |
 | Sync reading position | Syncs only the reading position, as with `QuickSync=true`. See [Quick sync](#quick-sync). |
 
-The **Settings** button opens the settings page. See [Configuration](#configuration).
+The **Settings** button opens the settings page. See [Configuration](#configuration). With `Hardcover=true`, a **Hardcover** button next to it opens the Hardcover page. See [Hardcover](#hardcover).
 
 With NickelMenu, you can also tap **Sync now** in the NickelMenu menu of a book or of the home screen. This item uses the `QuickSync` setting.
 
@@ -158,7 +158,7 @@ QuickSync=false
 AutoSyncOnOpen=false
 ; Sync when the device goes to sleep.
 AutoSyncOnSleep=false
-; Show the Hardcover section on the NickelSync page.
+; Show a Hardcover button on the NickelSync page.
 Hardcover=false
 ```
 
@@ -166,22 +166,22 @@ Hardcover=false
 
 ## Hardcover
 
-Set `Hardcover=true` in the [configuration](#configuration) to show a Hardcover section on the NickelSync page. The section shows [Hardcover](https://hardcover.app) data of the open book. It is read-only. NickelSync does not change data on Hardcover.
+Set `Hardcover=true` in the [configuration](#configuration) to show a **Hardcover** button on the NickelSync page. The button opens the Hardcover page. The page shows [Hardcover](https://hardcover.app) data of the open book. It is read-only. NickelSync does not change data on Hardcover.
 
 NickelSync has its own Hardcover sign-in. It does not use the token of NickelHardcover. To sign in:
 
 1. Connect Wi-Fi.
-2. On the NickelSync page, tap **Sign in to Hardcover**. The page shows a code.
+2. On the NickelSync page, tap **Hardcover**, then **Sign in to Hardcover**. The page shows a code.
 3. On a phone or a computer, go to `hardcover.app/link` and type the code.
 
 NickelSync asks only for read access: your profile, your library, your reading journal and the book catalog. It keeps the tokens in `KOBOeReader/.adds/nickelsync/hardcover.ini`. **Sign out** revokes the tokens and deletes them from the file.
 
-Tap **Load from Hardcover** to load the data. NickelSync does not load data on its own. If Wi-Fi is off, the section shows "Connect to Wi-Fi first."
+Tap **Load from Hardcover** to load the data. NickelSync does not load data on its own. If Wi-Fi is off, the page shows "Connect to Wi-Fi first."
 
 | Data | Where |
 |---|---|
-| Status, for example Currently Reading | The section |
-| Progress in percent and pages, start and finish dates | The section |
+| Status, for example Currently Reading | The Hardcover page |
+| Progress in percent and pages, start and finish dates | The Hardcover page |
 | Journal entries: quotes, notes, ratings, reviews, progress and status changes | The **Reading journal** page, 5 entries for each page |
 
 NickelSync finds the book on Hardcover from the ISBN in the Kobo database. If the book has no ISBN, or Hardcover does not know the ISBN, tap **Link book**. The search page shows Hardcover books with the title and author of the open book. Tap a result to link it. NickelSync keeps the link in `hardcover.ini`. **Unlink book** removes the link.

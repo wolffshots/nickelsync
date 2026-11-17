@@ -4,8 +4,8 @@
 #include <QObject>
 #include <QPointer>
 
+class QBoxLayout;
 class QLabel;
-class QVBoxLayout;
 class QWidget;
 
 // settingBool and settingInt read one key of the [NickelSync] section of
@@ -23,7 +23,7 @@ class SettingsPage : public QObject {
 
 public:
     // addButton adds the "Settings" button to the NickelSync page.
-    static void addButton(QVBoxLayout *layout, QWidget *parent);
+    static void addButton(QBoxLayout *layout, QWidget *parent);
 
 private Q_SLOTS:
     void open();

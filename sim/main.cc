@@ -43,7 +43,7 @@
 //   --expect K=N,...    with --auto: the counts to check at the end. Keys:
 //                       pulls, pushes, syncs, toasts, vetoes, suspended (0 or 1).
 //   --hardcover signed-out|signed-in|stale
-//                       turn on the Hardcover section (Hardcover=true) and set
+//                       turn on the Hardcover page (Hardcover=true) and set
 //                       the token store: no tokens, valid tokens, or an access
 //                       token that the mock rejects, so NickelSync refreshes it.
 //                       The mock server hcmock.py must run (run.sh starts it).

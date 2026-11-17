@@ -24,8 +24,8 @@
 // tap opens the NickelSync page, a full-screen N3Dialog. The page also shows
 // the server stats of the open book (serverstats.cc).
 //
-// With Hardcover=true in the config, the page also has a read-only Hardcover
-// section. It has its own OAuth sign-in. See hardcover.h.
+// With Hardcover=true in the config, the page also has a Hardcover button. It
+// opens a read-only Hardcover page with its own OAuth sign-in. See hardcover.h.
 //
 // Boot safety: the mod hooks no Nickel function. Until a book or a reading
 // menu shows, it only watches the trigger file and checks the type of each Qt
@@ -609,13 +609,18 @@ void NickelSync::showPage() {
         pageLabel(l, "nsDesc", QString::fromUtf8(b.desc));
     }
     l->addSpacing(px(56));
-    SettingsPage::addButton(l, content);
+    // Settings, and the button of the Hardcover page, in one row.
+    QHBoxLayout *more = new QHBoxLayout();
+    more->setSpacing(px(24));
+    l->addLayout(more);
+    SettingsPage::addButton(more, content);
+    if (Hardcover::enabled())
+        Hardcover::instance()->addButton(more, screen);
+    more->addStretch(1);
     // Below the buttons, so that the buttons do not move when the stats load.
     l->addSpacing(px(56));
     ServerStats *stats = new ServerStats(openBookId(), px(12));
     l->addWidget(stats);
-    if (Hardcover::enabled())
-        Hardcover::instance()->addSection(l, screen);
     l->addStretch(1);
 
     page = N3DialogFactory__getDialog(content, true);
@@ -782,9 +787,9 @@ static struct nh_dlsym NickelSyncDlsym[] = {
     { .name = "_ZNK22N3PowerWorkflowManager8sleepingEv",                     .out = nh_symoutptr(N3PowerWorkflowManager__sleeping),         .desc = "auto-sync on sleep", .optional = true },
     { .name = "_ZN20ScopedSuspendDisableC1Ev",                               .out = nh_symoutptr(ScopedSuspendDisable__constructor),        .desc = "auto-sync on sleep", .optional = true },
     { .name = "_ZN12PowerManager14sharedInstanceEv",                         .out = nh_symoutptr(PowerManager__sharedInstance),             .desc = "auto-sync on sleep", .optional = true },
-    { .name = "_ZNK7Content5getIdEv",                                        .out = nh_symoutptr(Content__getId),                           .desc = "server stats, Hardcover section", .optional = true },
-    { .name = "_ZNK7Content8getTitleEv",                                     .out = nh_symoutptr(Content__getTitle),                        .desc = "Hardcover section", .optional = true },
-    { .name = "_ZNK7Content14getAttributionEv",                              .out = nh_symoutptr(Content__getAttribution),                  .desc = "Hardcover section", .optional = true },
+    { .name = "_ZNK7Content5getIdEv",                                        .out = nh_symoutptr(Content__getId),                           .desc = "server stats, Hardcover page", .optional = true },
+    { .name = "_ZNK7Content8getTitleEv",                                     .out = nh_symoutptr(Content__getTitle),                        .desc = "Hardcover page", .optional = true },
+    { .name = "_ZNK7Content14getAttributionEv",                              .out = nh_symoutptr(Content__getAttribution),                  .desc = "Hardcover page", .optional = true },
     {0},
 };
 // clang-format on

@@ -14,19 +14,21 @@
 
 #include <functional>
 
+class QBoxLayout;
 class QLabel;
 class QLayout;
 class QNetworkAccessManager;
 class QVBoxLayout;
 class QWidget;
 
-// Hardcover shows Hardcover.app data of the open book on the NickelSync page:
-// the library status and the reading progress, and a reading journal page.
+// Hardcover shows Hardcover.app data of the open book on its own page: the
+// library status and the reading progress, and a reading journal page. A
+// "Hardcover" button on the NickelSync page opens the page.
 // It is read-only. NickelSync signs in with its own OAuth app (device code
 // flow), so it does not use the token of NickelHardcover.
 //
 // hardcover.cc has the sign-in, the token store and the queries.
-// hardcoverpage.cc has the section of the NickelSync page and the pages.
+// hardcoverpage.cc has the button and the pages.
 class Hardcover : public QObject {
     Q_OBJECT
 
@@ -34,9 +36,9 @@ public:
     static Hardcover *instance();
     // enabled reads Hardcover in the [NickelSync] group of config.ini.
     static bool enabled();
-    // addSection adds the Hardcover section to the NickelSync page. screen is
-    // the page size.
-    void addSection(QVBoxLayout *layout, QSize screen);
+    // addButton adds the "Hardcover" button to a row of the NickelSync page.
+    // screen is the page size.
+    void addButton(QBoxLayout *row, QSize screen);
 
 private Q_SLOTS:
     void onButton();
@@ -102,12 +104,13 @@ private:
     void rebuild();
     void rebuildJournal();
     void rebuildSearch();
+    void showPage();
     void showJournal();
     void showSearch();
 
     Auth auth = SignedOut;
     Load loadState = NotLoaded;
-    QString message; // an error or a note for the section
+    QString message; // an error or a note for the Hardcover page
     Book book;
     int bookId = 0;
     Status status;
@@ -136,8 +139,9 @@ private:
 
     QSize screen;
     QNetworkAccessManager *net = nullptr;
-    QPointer<QWidget> section;     // the section on the NickelSync page
-    QPointer<QWidget> sectionBody; // its content, built again on each change
+    QPointer<QWidget> mainView;    // the Hardcover page
+    QPointer<QWidget> mainContent; // its content widget
+    QPointer<QWidget> mainBody;    // the content, built again on each change
     QPointer<QWidget> journalView;    // the journal page
     QPointer<QWidget> journalContent; // its content widget
     QPointer<QWidget> journalBody;

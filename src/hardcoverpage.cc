@@ -1,5 +1,6 @@
-// Hardcover: the section of the NickelSync page, the reading journal page and
-// the "Link book" page. The pages are N3Dialog pages, as the NickelSync page.
+// Hardcover: the button on the NickelSync page, the Hardcover page, the reading
+// journal page and the "Link book" page. The pages are N3Dialog pages, as the
+// NickelSync page.
 // Each one has a body widget that rebuild*() builds again when its data
 // changes. The sign-in and the queries are in hardcover.cc.
 
@@ -80,7 +81,9 @@ QVBoxLayout *Hardcover::freshBody(QWidget *container, QPointer<QWidget> &body) {
     return l;
 }
 
-void Hardcover::addSection(QVBoxLayout *layout, QSize size) {
+// addButton also gets the open book. The NickelSync page hides the book, so
+// the Hardcover page cannot get it later.
+void Hardcover::addButton(QBoxLayout *row, QSize size) {
     screen = size;
     Book open = openBook();
     if (open.contentId != book.contentId) {
@@ -89,21 +92,24 @@ void Hardcover::addSection(QVBoxLayout *layout, QSize size) {
         message.clear();
     }
     book = open;
-    layout->addSpacing(px(56));
-    section = new QWidget();
-    section->setStyleSheet(style());
-    QVBoxLayout *l = new QVBoxLayout(section);
-    l->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(section);
+    button(row, QStringLiteral("Hardcover"), "open", false);
+}
+
+// showPage opens the Hardcover page over the NickelSync page.
+void Hardcover::showPage() {
+    if (mainView)
+        return;
+    QWidget *content = nullptr;
+    mainView = newPage(QStringLiteral("Hardcover"), content);
+    mainContent = content;
     rebuild();
 }
 
-// rebuild builds the section again from the state.
+// rebuild builds the Hardcover page again from the state.
 void Hardcover::rebuild() {
-    if (!section)
+    if (!mainContent)
         return;
-    QVBoxLayout *l = freshBody(section, sectionBody);
-    label(l, "nsKey", QStringLiteral("Hardcover"));
+    QVBoxLayout *l = freshBody(mainContent, mainBody);
 
     if (auth == SignedOut) {
         label(l, "nsDesc", QStringLiteral("Sign in to show the Hardcover status and reading journal of this book."));
@@ -179,7 +185,9 @@ void Hardcover::onButton() {
         return;
     QByteArray a = b->property("hcAction").toByteArray();
     nh_log("NickelSync: HC: TAP: %s", a.constData());
-    if (a == "signin") {
+    if (a == "open") {
+        showPage();
+    } else if (a == "signin") {
         startSignIn();
     } else if (a == "cancel") {
         cancelSignIn();

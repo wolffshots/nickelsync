@@ -75,7 +75,7 @@ Setting const settings[] = {
     {"QuickSync",       Bool, "false", 0,  0,   nullptr,            nullptr, "Quick sync",           "Inside a book, sync only the reading position and skip the full sync."},
     {"AutoSyncOnOpen",  Bool, "false", 0,  0,   nullptr,            nullptr, "Sync on book open",    "Sync the reading position when a book loads."},
     {"AutoSyncOnSleep", Bool, "false", 0,  0,   nullptr,            nullptr, "Sync on sleep",        "Sync when the device goes to sleep."},
-    {"Hardcover",       Bool, "false", 0,  0,   nullptr,            nullptr, "Hardcover section",    "Show the Hardcover section on the NickelSync page."},
+    {"Hardcover",       Bool, "false", 0,  0,   nullptr,            nullptr, "Hardcover",            "Show a Hardcover button on the NickelSync page."},
 };
 // clang-format on
 
@@ -346,7 +346,7 @@ int settingInt(char const *key) {
     return s ? valueOf(readConfig(), *s).toInt() : 0;
 }
 
-void SettingsPage::addButton(QVBoxLayout *layout, QWidget *parent) {
+void SettingsPage::addButton(QBoxLayout *layout, QWidget *parent) {
     static SettingsPage *instance = new SettingsPage();
     QLabel *b = newButton(parent, QStringLiteral("Settings"));
     connect(b, SIGNAL(tapped(bool)), instance, SLOT(open()));
