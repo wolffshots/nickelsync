@@ -84,6 +84,8 @@ if [ "${1:-}" = "--all" ]; then
     check "$conf.corrupt" "$SIM/cases/corrupt.ini"
     run settings-missing    --settings QuickSync
     check "$conf" "$SIM/cases/quick.expected.ini"
+    run settings-hardcover  --settings Hardcover
+    check "$conf" "$SIM/cases/hardcover.expected.ini"
     # Auto-sync. NickelSync shows no toasts for these.
     run auto-open           --auto open --expect pulls=1,pushes=1,syncs=0,toasts=0
     run auto-open-newer     --auto open --server newer --expect pulls=1,pushes=0,syncs=0,toasts=0
@@ -105,7 +107,7 @@ if [ "${1:-}" = "--all" ]; then
     run hc-signin           --wifi on --hardcover signed-out \
                             --steps "Hardcover;Sign in to Hardcover;expect:NKSY-2026;wait:3000;expect:Load from Hardcover"
     run hc-status           --wifi on --hardcover signed-in --isbn 9780000000001 \
-                            --steps "Hardcover;Load from Hardcover;expect:Currently Reading, 42%, page 160;Reading journal;expect:The light does not ask;Older;expect:Want to Read"
+                            --steps "Hardcover;Load from Hardcover;expect:Currently Reading, 42%, page 160;Reading journal;expect:The light does not ask;Older;expect:Want to Read;back;expect:Currently Reading, 42%;back;expect:Sync now;Hardcover;close;closed"
     run hc-link             --wifi on --hardcover signed-in \
                             --steps "Hardcover;Load from Hardcover;expect:not on Hardcover;Link book;More results;Previous;The Lighthouse Keeper's Daughter;expect:Want to Read;Unlink book;expect:Load from Hardcover"
     run hc-empty            --wifi on --hardcover signed-in --isbn 9780000000002 \

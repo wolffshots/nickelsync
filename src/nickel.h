@@ -30,4 +30,9 @@ extern QString (*Content__getId)(void const *);
 extern QString (*Content__getTitle)(void const *);
 extern QString (*Content__getAttribution)(void const *);
 
+// openSubPage shows page, an N3Dialog, over the NickelSync page. The back
+// button closes page. The close button closes page, the other sub-pages and
+// the NickelSync page. nickelsync.cc defines it.
+void openSubPage(QWidget *page);
+
 #endif

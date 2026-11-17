@@ -614,8 +614,10 @@ void NickelSync::showPage() {
     more->setSpacing(px(24));
     l->addLayout(more);
     SettingsPage::addButton(more, content);
-    if (Hardcover::enabled())
-        Hardcover::instance()->addButton(more, screen);
+    // The settings page can turn Hardcover on or off, so the button is always
+    // there. onSubPageClosed shows or hides it.
+    hcButton = Hardcover::instance()->addButton(more, screen);
+    hcButton->setVisible(Hardcover::enabled());
     more->addStretch(1);
     // Below the buttons, so that the buttons do not move when the stats load.
     l->addSpacing(px(56));
@@ -628,6 +630,7 @@ void NickelSync::showPage() {
     page->setFixedSize(screen);
     MainWindowController__pushView(MainWindowController__sharedInstance(), page);
     connect(page, SIGNAL(closeTapped()), page, SLOT(deleteLater()));
+    connect(page, SIGNAL(backTapped()), page, SLOT(deleteLater()));
     // Queued, so that Nickel shows the book again before a sync starts.
     connect(page, SIGNAL(destroyed()), this, SLOT(onPageClosed()), Qt::QueuedConnection);
     page->show();
@@ -669,6 +672,42 @@ void NickelSync::onPageButton() {
     pending = Mode(button->property("nsMode").toInt());
     syncOnClose = true;
     page->deleteLater();
+}
+
+void openSubPage(QWidget *sub) {
+    MainWindowController__pushView(MainWindowController__sharedInstance(), sub);
+    QObject::connect(sub, SIGNAL(backTapped()), sub, SLOT(deleteLater()));
+    if (controller)
+        controller->addSubPage(sub);
+    else
+        QObject::connect(sub, SIGNAL(closeTapped()), sub, SLOT(deleteLater()));
+    sub->show();
+}
+
+// addSubPage makes the close button of sub close the whole NickelSync stack.
+void NickelSync::addSubPage(QWidget *sub) {
+    subPages.append(sub);
+    connect(sub, SIGNAL(closeTapped()), this, SLOT(closeAll()));
+    connect(sub, SIGNAL(destroyed()), this, SLOT(onSubPageClosed()), Qt::QueuedConnection);
+}
+
+// closeAll closes the sub-pages and the NickelSync page, back to the book.
+void NickelSync::closeAll() {
+    nh_log("NickelSync: PAGE: close all");
+    for (QPointer<QWidget> const &sub : subPages)
+        if (sub)
+            sub->deleteLater();
+    subPages.clear();
+    if (page)
+        page->deleteLater();
+}
+
+// onSubPageClosed shows or hides the Hardcover button, because the settings
+// page can change Hardcover.
+void NickelSync::onSubPageClosed() {
+    subPages.removeAll(QPointer<QWidget>());
+    if (hcButton)
+        hcButton->setVisible(Hardcover::enabled());
 }
 
 // onPageClosed starts the sync of a page button. Then, if no sync runs, it

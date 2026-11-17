@@ -3,6 +3,7 @@
 
 #include <QDateTime>
 #include <QElapsedTimer>
+#include <QList>
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
@@ -31,6 +32,7 @@ public:
     bool busy() const { return state != Idle; }
     bool eventFilter(QObject *obj, QEvent *event) override;
     void log(QString const &line);
+    void addSubPage(QWidget *sub);
 
 Q_SIGNALS:
     // ended comes when a sync that trigger() started is done.
@@ -40,6 +42,8 @@ private Q_SLOTS:
     void showPage();
     void onPageButton();
     void onPageClosed();
+    void closeAll();
+    void onSubPageClosed();
     void onConnected();
     void onConnectFailed();
     void onPositionReceived();
@@ -76,6 +80,8 @@ private:
     QString position;       // the reading position result, for the last toast
     QStringList toasts;     // the main texts of toasts that Nickel did not show yet
     QPointer<QWidget> page; // the open NickelSync page
+    QList<QPointer<QWidget>> subPages; // the pages over the NickelSync page
+    QPointer<QWidget> hcButton; // the Hardcover button, shown with Hardcover=true
     Mode pending = FromConfig; // the sync to start when the page closes
     bool syncOnClose = false;  // a page button was tapped
     bool statsAirplane = false; // the server stats turned airplane mode off

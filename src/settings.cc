@@ -47,10 +47,10 @@
 static const int MAX_SIZE = 256 * 1024;
 
 // The page uses the Nickel functions in nickel.h that nickelsync.cc resolves:
-// MainWindowController__sharedInstance, MainWindowController__pushView,
 // N3ButtonLabel__constructor, N3DialogFactory__getDialog and
-// N3Dialog__setTitle. If one is missing, nickelsync.cc shows no icon, so no
-// page opens.
+// N3Dialog__setTitle, and openSubPage(), which calls
+// MainWindowController__pushView. If one is missing, nickelsync.cc shows no
+// icon, so no page opens.
 
 namespace {
 
@@ -323,6 +323,8 @@ QLabel *newButton(QWidget *parent, QString const &text) {
     // The size that NickelHardcover allocates.
     QLabel *b = reinterpret_cast<QLabel *>(calloc(1, 512));
     N3ButtonLabel__constructor(b, parent);
+    // Without a style property, Nickel draws the button as italic text.
+    b->setProperty("borderedButton", true);
     b->setText(text);
     return b;
 }
@@ -396,9 +398,7 @@ void SettingsPage::open() {
     N3Dialog__setTitle(page, QStringLiteral("NickelSync settings"));
     page->setFixedSize(screen);
     refresh();
-    MainWindowController__pushView(MainWindowController__sharedInstance(), page);
-    connect(page, SIGNAL(closeTapped()), page, SLOT(deleteLater()));
-    page->show();
+    openSubPage(page);
     nh_log("NickelSync: SETTINGS: page opened");
 }
 

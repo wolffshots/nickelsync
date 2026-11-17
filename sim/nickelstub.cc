@@ -414,8 +414,12 @@ void TouchLabel::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 N3ButtonLabel::N3ButtonLabel(QWidget *parent) : TouchLabel(parent) {
-    setStyleSheet(QStringLiteral("N3ButtonLabel { border: 2px solid black; border-radius: 6px; padding: 12px 28px; }"
-                                 "N3ButtonLabel[primaryButton=\"true\"] { background: black; color: white; }"));
+    // As on the device: a button without a style property is italic text.
+    setStyleSheet(QStringLiteral("N3ButtonLabel { border: none; font-style: italic; padding: 12px 0px; }"
+                                 "N3ButtonLabel[borderedButton=\"true\"] { border: 2px solid black; border-radius: 6px;"
+                                 " padding: 12px 28px; font-style: normal; }"
+                                 "N3ButtonLabel[primaryButton=\"true\"] { border: 2px solid black; border-radius: 6px;"
+                                 " padding: 12px 28px; font-style: normal; background: black; color: white; }"));
     setFont(uiFont(21, true));
 }
 
@@ -429,11 +433,17 @@ N3Dialog::N3Dialog(QWidget *content) : QFrame(nullptr) {
     bar->setObjectName(QStringLiteral("n3TitleBar"));
     QHBoxLayout *bl = new QHBoxLayout(bar);
     bl->setContentsMargins(24, 10, 12, 10);
+    TouchLabel *backButton = new TouchLabel(bar);
+    backButton->setObjectName(QStringLiteral("n3Back"));
+    backButton->setPixmap(icon(QStringLiteral("<"), BAR_ICON));
+    backButton->hide();
+    back = backButton;
     title = new QLabel(bar);
     title->setFont(uiFont(24, true));
     TouchLabel *close = new TouchLabel(bar);
     close->setObjectName(QStringLiteral("n3Close"));
     close->setPixmap(icon(QStringLiteral("✕"), BAR_ICON));
+    bl->addWidget(backButton);
     bl->addWidget(title, 1);
     bl->addWidget(close);
     l->addWidget(bar);
@@ -442,6 +452,7 @@ N3Dialog::N3Dialog(QWidget *content) : QFrame(nullptr) {
         l->addWidget(content, 1);
     }
     connect(close, &TouchLabel::tapped, this, &N3Dialog::closeTapped);
+    connect(backButton, &TouchLabel::tapped, this, &N3Dialog::backTapped);
 }
 
 // ---- the functions that nickelsync.cc resolves with nh_dlsym -----------
@@ -497,6 +508,10 @@ static void N3Dialog__setTitle(QWidget *d, QString const &text) { static_cast<N3
 // too. The view gets the size of the Kobo window, not of the desktop screen.
 static QWidget *MainWindowController__pushView(QObject *, QWidget *view) {
     simLog(QStringLiteral("MainWindowController::pushView: %1").arg(view->metaObject()->className()));
+    if (N3Dialog *d = qobject_cast<N3Dialog *>(view))
+        for (N3Dialog *under : mainWindow->findChildren<N3Dialog *>())
+            if (under != d && under->isVisible())
+                d->back->show();
     view->setParent(mainWindow);
     view->setFixedSize(mainWindow->size());
     view->move(0, 0);

@@ -36,9 +36,9 @@ public:
     static Hardcover *instance();
     // enabled reads Hardcover in the [NickelSync] group of config.ini.
     static bool enabled();
-    // addButton adds the "Hardcover" button to a row of the NickelSync page.
-    // screen is the page size.
-    void addButton(QBoxLayout *row, QSize screen);
+    // addButton adds the "Hardcover" button to a row of the NickelSync page
+    // and returns it. screen is the page size.
+    QLabel *addButton(QBoxLayout *row, QSize screen);
 
 private Q_SLOTS:
     void onButton();

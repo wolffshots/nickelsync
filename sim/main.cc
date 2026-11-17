@@ -32,8 +32,9 @@
 //                       there is no config.ini (unless --quick, --auto or
 //                       --hardcover).
 //   --settings K1,K2    for --screenshot: open the settings page, tap the
-//                       button of each key in turn, close the page, open it
-//                       again, then exit. run.sh checks config.ini.
+//                       button of each key in turn, go back, check the
+//                       Hardcover button, open the page again, then close all
+//                       pages with the close button. run.sh checks config.ini.
 //   --auto open|sleep|off
 //                       with --screenshot: an auto-sync scenario instead of the
 //                       taps. open: a book loads (AutoSyncOnOpen=true). sleep:
@@ -52,7 +53,9 @@
 //                       these steps instead of a sync. A step is the text of a
 //                       button or of a search result to tap, "wait:MS", or
 //                       "expect:TEXT" / "absent:TEXT" to check the labels on
-//                       the screen. A png follows each tap and wait.
+//                       the screen. "back" and "close" tap the back or close
+//                       button of the top page. "closed" checks that no page
+//                       is left. A png follows each tap and wait.
 //
 // Exit codes in --screenshot mode: 0 pass, 3 no icon in the reading menu,
 // 4 page button not found, 5 a NickelSync toast was not moved to the top,
@@ -60,7 +63,9 @@
 // changed when the settings page opened again, 9 an --expect count differs,
 // 10 the server stats state is not the expected state, 11 Wi-Fi is still on
 // after the page closed, 12 a step target was not found, 13 an expect or
-// absent check failed.
+// absent check failed, 14 a visible button has no button style, 15 the close
+// button left a NickelSync page open, 16 the Hardcover button does not match
+// the Hardcover setting, 17 the back button did not close its page.
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
@@ -70,6 +75,7 @@
 #include <QMap>
 #include <QMenu>
 #include <QPainter>
+#include <QPointer>
 #include <QSettings>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -77,6 +83,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 
 #include <NickelHook.h>
 
@@ -156,8 +163,42 @@ static QStringList settingTexts() {
     return out;
 }
 
-// runSettings opens the settings page from the NickelSync page, taps the
-// button of each key, closes the page and opens it again.
+// stylesOk checks that each visible button has a Nickel button style. Without
+// one, Nickel draws the button as italic text.
+static bool stylesOk() {
+    for (N3ButtonLabel *b : nickelstub_mainWindow()->findChildren<N3ButtonLabel *>()) {
+        if (b->isVisible() && !b->property("primaryButton").toBool() && !b->property("borderedButton").toBool()) {
+            std::fprintf(stderr, "sim: button without a style: %s\n", qPrintable(b->text()));
+            return false;
+        }
+    }
+    return true;
+}
+
+// topDialog is the N3Dialog on top: the last visible one.
+static N3Dialog *topDialog() {
+    N3Dialog *top = nullptr;
+    for (N3Dialog *d : nickelstub_mainWindow()->findChildren<N3Dialog *>())
+        if (d->isVisible())
+            top = d;
+    return top;
+}
+
+// checkAllClosed checks, a moment after a tap on the close button, that no
+// NickelSync page is left.
+static void checkAllClosed(std::function<void()> next) {
+    QTimer::singleShot(300, [next] {
+        shot(QStringLiteral("closed"));
+        if (!nickelstub_mainWindow()->findChildren<N3Dialog *>().isEmpty())
+            return fail(15, "the close button left a NickelSync page open");
+        std::fprintf(stderr, "sim: all pages closed\n");
+        next();
+    });
+}
+
+// runSettings opens the settings page from the NickelSync page and taps the
+// button of each key. It goes back with the back button, checks the Hardcover
+// button, opens the page again and closes all pages with the close button.
 static void runSettings(QStringList const &keys) {
     N3ButtonLabel *open = findButton(QStringLiteral("Settings"));
     if (!open)
@@ -165,6 +206,8 @@ static void runSettings(QStringList const &keys) {
     QMetaObject::invokeMethod(open, "tapped", Q_ARG(bool, false));
     QTimer::singleShot(300, [keys] {
         shot(QStringLiteral("settings"));
+        if (!stylesOk())
+            return fail(14, "a visible button has no button style");
         for (QString const &key : keys) {
             N3ButtonLabel *b = nullptr;
             for (N3ButtonLabel *c : nickelstub_mainWindow()->findChildren<N3ButtonLabel *>())
@@ -178,19 +221,29 @@ static void runSettings(QStringList const &keys) {
         std::fprintf(stderr, "sim: settings: %s\n", qPrintable(before.join(' ')));
         QTimer::singleShot(300, [before] {
             shot(QStringLiteral("settings changed"));
-            for (N3Dialog *d : nickelstub_mainWindow()->findChildren<N3Dialog *>())
-                if (d->title->text() == QLatin1String("NickelSync settings"))
-                    QMetaObject::invokeMethod(d, "closeTapped");
-            QTimer::singleShot(300, [before] {
+            N3Dialog *d = topDialog();
+            if (!d || d->title->text() != QLatin1String("NickelSync settings") || !d->back->isVisible())
+                return fail(4, "no back button on the settings page");
+            QMetaObject::invokeMethod(d, "backTapped");
+            QPointer<N3Dialog> settingsPage = d;
+            QTimer::singleShot(300, [before, settingsPage] {
+                shot(QStringLiteral("back"));
+                if (settingsPage)
+                    return fail(17, "the back button did not close the settings page");
                 N3ButtonLabel *again = findButton(QStringLiteral("Settings"));
-                if (!again)
-                    return fail(4, "Settings button not found after close");
+                if (!again || !again->isVisible())
+                    return fail(4, "Settings button not found after back");
+                N3ButtonLabel *hc = findButton(QStringLiteral("Hardcover"));
+                bool want = before.contains(QStringLiteral("Hardcover=On"));
+                if (!hc || hc->isVisible() != want)
+                    return fail(16, "the Hardcover button does not match the Hardcover setting");
                 QMetaObject::invokeMethod(again, "tapped", Q_ARG(bool, false));
                 QTimer::singleShot(300, [before] {
                     shot(QStringLiteral("settings reopened"));
                     if (settingTexts() != before)
                         return fail(8, "a value changed when the settings page opened again");
-                    QApplication::quit();
+                    QMetaObject::invokeMethod(topDialog(), "closeTapped");
+                    checkAllClosed([] { QApplication::quit(); });
                 });
             });
         });
@@ -234,6 +287,8 @@ static void runScreenshot(QString const &pick, QStringList const &settings, QStr
             QMetaObject::invokeMethod(icon, "tapped", Q_ARG(bool, false));
             QTimer::singleShot(300, [pick, settings, expectStats] {
                 shot(QStringLiteral("nickelsync page"));
+                if (!stylesOk())
+                    return fail(14, "a visible button has no button style");
                 if (!settings.isEmpty())
                     return runSettings(settings);
                 if (pick == QLatin1String("none"))
@@ -330,9 +385,26 @@ static void runStep(QStringList const &steps, int i) {
         std::fprintf(stderr, "sim: step %s: ok\n", qPrintable(s));
         return runStep(steps, i + 1);
     }
+    if (s == QLatin1String("closed")) {
+        if (!nickelstub_mainWindow()->findChildren<N3Dialog *>().isEmpty())
+            return fail(15, "the close button left a NickelSync page open");
+        std::fprintf(stderr, "sim: step closed: ok\n");
+        return runStep(steps, i + 1);
+    }
     int wait = 1500;
+    QPointer<N3Dialog> backFrom;
     if (s.startsWith(QLatin1String("wait:"))) {
         wait = s.mid(5).toInt();
+    } else if (s == QLatin1String("back") || s == QLatin1String("close")) {
+        N3Dialog *d = topDialog();
+        if (!d || (s == QLatin1String("back") && !d->back->isVisible())) {
+            std::fprintf(stderr, "sim: step %s\n", qPrintable(s));
+            return fail(12, "step target not found");
+        }
+        QMetaObject::invokeMethod(d, s == QLatin1String("back") ? "backTapped" : "closeTapped");
+        if (s == QLatin1String("back"))
+            backFrom = d;
+        wait = 500;
     } else {
         QLabel *t = tappable(s);
         if (!t) {
@@ -341,8 +413,12 @@ static void runStep(QStringList const &steps, int i) {
         }
         QMetaObject::invokeMethod(t, "tapped", Q_ARG(bool, false));
     }
-    QTimer::singleShot(wait, [steps, i, s] {
+    QTimer::singleShot(wait, [steps, i, s, backFrom] {
         shot(s.startsWith(QLatin1String("wait:")) ? QStringLiteral("wait") : QStringLiteral("tap ") + s);
+        if (backFrom)
+            return fail(17, "the back button did not close its page");
+        if (!stylesOk())
+            return fail(14, "a visible button has no button style");
         runStep(steps, i + 1);
     });
 }

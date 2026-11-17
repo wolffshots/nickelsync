@@ -49,7 +49,8 @@ QLabel *Hardcover::label(QLayout *layout, char const *name, QString const &text)
 QLabel *Hardcover::button(QLayout *layout, QString const &text, char const *action, bool primary) {
     QLabel *b = reinterpret_cast<QLabel *>(calloc(1, 512));
     N3ButtonLabel__constructor(b, layout->parentWidget());
-    b->setProperty("primaryButton", primary);
+    // Without a style property, Nickel draws the button as italic text.
+    b->setProperty(primary ? "primaryButton" : "borderedButton", true);
     b->setProperty("hcAction", QByteArray(action));
     b->setText(text);
     connect(b, SIGNAL(tapped(bool)), this, SLOT(onButton()));
@@ -83,7 +84,7 @@ QVBoxLayout *Hardcover::freshBody(QWidget *container, QPointer<QWidget> &body) {
 
 // addButton also gets the open book. The NickelSync page hides the book, so
 // the Hardcover page cannot get it later.
-void Hardcover::addButton(QBoxLayout *row, QSize size) {
+QLabel *Hardcover::addButton(QBoxLayout *row, QSize size) {
     screen = size;
     Book open = openBook();
     if (open.contentId != book.contentId) {
@@ -92,7 +93,7 @@ void Hardcover::addButton(QBoxLayout *row, QSize size) {
         message.clear();
     }
     book = open;
-    button(row, QStringLiteral("Hardcover"), "open", false);
+    return button(row, QStringLiteral("Hardcover"), "open", false);
 }
 
 // showPage opens the Hardcover page over the NickelSync page.
@@ -231,9 +232,7 @@ QWidget *Hardcover::newPage(QString const &title, QWidget *&content) {
     QWidget *page = N3DialogFactory__getDialog(content, true);
     N3Dialog__setTitle(page, title);
     page->setFixedSize(screen);
-    MainWindowController__pushView(MainWindowController__sharedInstance(), page);
-    connect(page, SIGNAL(closeTapped()), page, SLOT(deleteLater()));
-    page->show();
+    openSubPage(page);
     return page;
 }
 

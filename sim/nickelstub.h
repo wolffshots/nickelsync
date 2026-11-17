@@ -205,7 +205,8 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
 };
 
-// N3ButtonLabel is the Nickel button. primaryButton=true gives the dark style.
+// N3ButtonLabel is the Nickel button. primaryButton=true gives the dark style,
+// borderedButton=true an outline. Without either, Nickel draws italic text.
 class N3ButtonLabel : public TouchLabel {
     Q_OBJECT
 public:
@@ -213,13 +214,16 @@ public:
 };
 
 // N3Dialog is the full-screen Nickel page with a title bar and a close button.
+// A page over another N3Dialog also gets a back button, as on the device.
 class N3Dialog : public QFrame {
     Q_OBJECT
 public:
     explicit N3Dialog(QWidget *content);
     QLabel *title;
+    QLabel *back;
 Q_SIGNALS:
     void closeTapped();
+    void backTapped();
 };
 
 #endif
