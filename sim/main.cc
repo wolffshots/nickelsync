@@ -16,12 +16,19 @@
 //                       the NickelSync page, save a png for each step and
 //                       toast, then exit (run.sh uses the VNC platform)
 //   --pick TEXT         the page button for --screenshot (default "Sync now")
+//   --config FILE       copy FILE to config.ini before the run. Without it,
+//                       there is no config.ini (unless --quick).
+//   --settings K1,K2    for --screenshot: open the settings page, tap the
+//                       button of each key in turn, close the page, open it
+//                       again, then exit. run.sh checks config.ini.
 //
 // Exit codes in --screenshot mode: 0 pass, 3 no icon in the reading menu,
 // 4 page button not found, 5 a NickelSync toast was not moved to the top,
-// 6 no result toast within 90 s.
+// 6 no result toast within 90 s, 7 setting button not found, 8 a value
+// changed when the settings page opened again.
 #include <QApplication>
 #include <QDir>
+#include <QFile>
 #include <QLabel>
 #include <QMenu>
 #include <QPainter>
@@ -93,26 +100,82 @@ public:
     }
 };
 
-static void runScreenshot(QString const &pick) {
+static N3ButtonLabel *findButton(QString const &text) {
+    for (N3ButtonLabel *b : nickelstub_mainWindow()->findChildren<N3ButtonLabel *>())
+        if (b->text() == text)
+            return b;
+    return nullptr;
+}
+
+// settingTexts gives the text of each setting button, in page order.
+static QStringList settingTexts() {
+    QStringList out;
+    for (N3ButtonLabel *b : nickelstub_mainWindow()->findChildren<N3ButtonLabel *>())
+        if (b->property("nsKey").isValid())
+            out << QString::fromLatin1(b->property("nsKey").toByteArray()) + "=" + b->text();
+    return out;
+}
+
+// runSettings opens the settings page from the NickelSync page, taps the
+// button of each key, closes the page and opens it again.
+static void runSettings(QStringList const &keys) {
+    N3ButtonLabel *open = findButton(QStringLiteral("Settings"));
+    if (!open)
+        return fail(4, "Settings button not found");
+    QMetaObject::invokeMethod(open, "tapped", Q_ARG(bool, false));
+    QTimer::singleShot(300, [keys] {
+        shot(QStringLiteral("settings"));
+        for (QString const &key : keys) {
+            N3ButtonLabel *b = nullptr;
+            for (N3ButtonLabel *c : nickelstub_mainWindow()->findChildren<N3ButtonLabel *>())
+                if (c->property("nsKey").toByteArray() == key.toLatin1())
+                    b = c;
+            if (!b)
+                return fail(7, "setting button not found");
+            QMetaObject::invokeMethod(b, "tapped", Q_ARG(bool, false));
+        }
+        QStringList before = settingTexts();
+        std::fprintf(stderr, "sim: settings: %s\n", qPrintable(before.join(' ')));
+        QTimer::singleShot(300, [before] {
+            shot(QStringLiteral("settings changed"));
+            for (N3Dialog *d : nickelstub_mainWindow()->findChildren<N3Dialog *>())
+                if (d->title->text() == QLatin1String("NickelSync settings"))
+                    QMetaObject::invokeMethod(d, "closeTapped");
+            QTimer::singleShot(300, [before] {
+                N3ButtonLabel *again = findButton(QStringLiteral("Settings"));
+                if (!again)
+                    return fail(4, "Settings button not found after close");
+                QMetaObject::invokeMethod(again, "tapped", Q_ARG(bool, false));
+                QTimer::singleShot(300, [before] {
+                    shot(QStringLiteral("settings reopened"));
+                    if (settingTexts() != before)
+                        return fail(8, "a value changed when the settings page opened again");
+                    QApplication::quit();
+                });
+            });
+        });
+    });
+}
+
+static void runScreenshot(QString const &pick, QStringList const &settings) {
     QDir().mkpath(shotDir);
-    QTimer::singleShot(300, [pick] {
+    QTimer::singleShot(300, [pick, settings] {
         shot(QStringLiteral("page"));
         nickelstub_readingView()->showMenu();
-        QTimer::singleShot(300, [pick] {
+        QTimer::singleShot(300, [pick, settings] {
             shot(QStringLiteral("reading menu"));
             QLabel *icon = nickelstub_mainWindow()->findChild<QLabel *>(QStringLiteral("nickelsyncIcon"));
             if (!icon)
                 return fail(3, "no nickelsyncIcon in the reading menu");
             QMetaObject::invokeMethod(icon, "tapped", Q_ARG(bool, false));
-            QTimer::singleShot(300, [pick] {
+            QTimer::singleShot(300, [pick, settings] {
                 shot(QStringLiteral("nickelsync page"));
-                for (N3ButtonLabel *b : nickelstub_mainWindow()->findChildren<N3ButtonLabel *>()) {
-                    if (b->text() == pick) {
-                        QMetaObject::invokeMethod(b, "tapped", Q_ARG(bool, false));
-                        return;
-                    }
-                }
-                fail(4, "page button not found");
+                if (!settings.isEmpty())
+                    return runSettings(settings);
+                if (N3ButtonLabel *b = findButton(pick))
+                    QMetaObject::invokeMethod(b, "tapped", Q_ARG(bool, false));
+                else
+                    fail(4, "page button not found");
             });
         });
     });
@@ -125,6 +188,8 @@ int main(int argc, char **argv) {
     QSize size(758, 1008);
     QString pick = QStringLiteral("Sync now");
     bool quick = false;
+    QString config;
+    QStringList settings;
     for (int i = 1; i < args.size(); i++) {
         QString a = args[i];
         QString v = i + 1 < args.size() ? args[i + 1] : QString();
@@ -154,17 +219,28 @@ int main(int argc, char **argv) {
         } else if (a == "--pick") {
             pick = v;
             i++;
+        } else if (a == "--config") {
+            config = v;
+            i++;
+        } else if (a == "--settings") {
+            settings = v.split(',', QString::SkipEmptyParts);
+            i++;
         } else {
             std::fprintf(stderr, "sim: unknown option %s\n", qPrintable(a));
             return 2;
         }
     }
 
-    // The mod reads its config on each sync, so set QuickSync before the run.
+    // The mod reads its config on each sync, so write it before the run.
     QDir().mkpath(QStringLiteral("/mnt/onboard/.adds/nickelsync"));
-    {
-        QSettings cfg(QStringLiteral("/mnt/onboard/.adds/nickelsync/config.ini"), QSettings::IniFormat);
-        cfg.setValue(QStringLiteral("NickelSync/QuickSync"), quick);
+    QString cfgPath = QStringLiteral("/mnt/onboard/.adds/nickelsync/config.ini");
+    if (!config.isEmpty() && !QFile::copy(config, cfgPath)) {
+        std::fprintf(stderr, "sim: could not copy %s to %s\n", qPrintable(config), qPrintable(cfgPath));
+        return 2;
+    }
+    if (quick) {
+        QSettings cfg(cfgPath, QSettings::IniFormat);
+        cfg.setValue(QStringLiteral("NickelSync/QuickSync"), true);
     }
 
     QWidget *w = nickelstub_mainWindow();
@@ -187,7 +263,7 @@ int main(int argc, char **argv) {
 
     if (!shotDir.isEmpty()) {
         app.installEventFilter(new ShotFilter());
-        runScreenshot(pick);
+        runScreenshot(pick, settings);
     }
     w->show();
     int rc = app.exec();

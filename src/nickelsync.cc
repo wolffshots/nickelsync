@@ -42,6 +42,7 @@
 #include <NickelHook.h>
 
 #include "nickelsync.h"
+#include "settings.h"
 
 #define NS_DIR       "/mnt/onboard/.adds/nickelsync"
 #define NS_CONFIG    NS_DIR "/config.ini"
@@ -91,7 +92,9 @@ static void (*WirelessWorkflowManager__connectWirelessSilently)(WirelessWorkflow
 static bool (*WirelessWorkflowManager__isAirplaneMode)(WirelessWorkflowManager *);
 static void (*WirelessWorkflowManager__setAirplaneMode)(WirelessWorkflowManager *, bool);
 
-static MainWindowController *(*MainWindowController__sharedInstance)();
+// settings.cc also uses this function and the page functions below, so they
+// are not static.
+MainWindowController *(*MainWindowController__sharedInstance)();
 static void (*MainWindowController__toast)(MainWindowController *, QString const &, QString const &, int);
 
 // Optional. If a firmware lacks them, NickelSync only runs the full sync.
@@ -102,10 +105,10 @@ static void const *(*ReadingView__getVolume)(void const *); // returns Volume co
 // The object sizes are the sizes that NickelHardcover allocates.
 static void (*TouchLabel__constructor)(QLabel *, QWidget *, QFlags<Qt::WindowType>);
 static void (*TouchLabel__setHitStateEnabled)(QLabel *, bool);
-static void (*N3ButtonLabel__constructor)(QLabel *, QWidget *);
-static QWidget *(*N3DialogFactory__getDialog)(QWidget *, bool);
-static void (*N3Dialog__setTitle)(QWidget *, QString const &);
-static QWidget *(*MainWindowController__pushView)(MainWindowController *, QWidget *);
+void (*N3ButtonLabel__constructor)(QLabel *, QWidget *);
+QWidget *(*N3DialogFactory__getDialog)(QWidget *, bool);
+void (*N3Dialog__setTitle)(QWidget *, QString const &);
+QWidget *(*MainWindowController__pushView)(MainWindowController *, QWidget *);
 
 static NickelSync *controller = nullptr;
 
@@ -182,10 +185,9 @@ void NickelSync::trigger(Mode mode) {
         return;
     }
 
-    QSettings cfg(QStringLiteral(NS_CONFIG), QSettings::IniFormat);
-    int connectTimeout = qBound(10, cfg.value("NickelSync/ConnectTimeout", 60).toInt(), 180);
-    bool restoreWifi = cfg.value("NickelSync/RestoreWifi", true).toBool();
-    quickSync = mode == FromConfig ? cfg.value("NickelSync/QuickSync", false).toBool() : mode == Quick;
+    int connectTimeout = settingInt("ConnectTimeout");
+    bool restoreWifi = settingBool("RestoreWifi");
+    quickSync = mode == FromConfig ? settingBool("QuickSync") : mode == Quick;
 
     WirelessWorkflowManager *wfm = WirelessWorkflowManager__sharedInstance();
     bool airplane = WirelessWorkflowManager__isAirplaneMode(wfm);
@@ -548,6 +550,8 @@ void NickelSync::showPage() {
         l->addWidget(button, 0, Qt::AlignLeft);
         pageLabel(l, "nsDesc", QString::fromUtf8(b.desc));
     }
+    l->addSpacing(px(56));
+    SettingsPage::addButton(l, content);
     l->addStretch(1);
 
     page = N3DialogFactory__getDialog(content, true);
@@ -629,6 +633,7 @@ static int nickelsync_init() {
 static bool nickelsync_uninstall() {
     nh_delete_file(NS_NM);
     nh_delete_file(NS_CONFIG);
+    nh_delete_file(NS_CONFIG ".corrupt");
     nh_delete_file(NS_LOG);
     nh_delete_dir(NS_DIR);
     return true;

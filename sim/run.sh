@@ -44,8 +44,9 @@ reset() {
 if [ "${1:-}" = "--all" ]; then
     out="${2:?usage: run.sh --all <dir>}"
     rc=0
+    conf="$ONBOARD/.adds/nickelsync/config.ini"
     run() {
-        local name="$1"; shift
+        name="$1"; shift
         reset
         echo "== $name"
         rm -rf "$out/$name"
@@ -62,6 +63,21 @@ if [ "${1:-}" = "--all" ]; then
     run wifi-fail           --wifi fail
     run bar-hardcover       --bar-icons hardcover
     run bar-crowded         --bar-icons hardcover,kpm,other
+    # check compares a file of the last run with the expected file.
+    check() {
+        if ! cmp -s "$1" "$2"; then
+            echo "== $name: FAIL: $1 is not the same as $2" >&2
+            diff "$2" "$1" >&2 || true
+            rc=1
+        fi
+    }
+    run settings-change     --config "$SIM/cases/custom.ini" --settings QuickSync,ConnectTimeout,RestoreWifi
+    check "$conf" "$SIM/cases/custom.expected.ini"
+    run settings-corrupt    --config "$SIM/cases/corrupt.ini" --settings QuickSync
+    check "$conf" "$SIM/cases/quick.expected.ini"
+    check "$conf.corrupt" "$SIM/cases/corrupt.ini"
+    run settings-missing    --settings QuickSync
+    check "$conf" "$SIM/cases/quick.expected.ini"
     exit $rc
 fi
 
