@@ -8,16 +8,16 @@ BUILD     := build
 CXX       := g++
 MOC       := moc
 RCC       := rcc
-QT_CFLAGS := $(shell pkg-config --cflags Qt5Widgets)
-QT_LIBS   := $(shell pkg-config --libs Qt5Widgets)
+QT_CFLAGS := $(shell pkg-config --cflags Qt5Widgets Qt5Network)
+QT_LIBS   := $(shell pkg-config --libs Qt5Widgets Qt5Network)
 CXXFLAGS  := -std=gnu++11 -fPIC -g $(QT_CFLAGS) -Wall -Wextra -Wno-deprecated-declarations \
              -Wno-missing-field-initializers -MMD -MP -I. -I../src -I../NickelHook
 
 vpath %.cc ../src .
 vpath %.h  ../src .
 
-SRCS   := nickelsync.cc nickelstub.cc nh_sim.cc main.cc
-MOCS   := nickelsync.h nickelstub.h
+SRCS   := nickelsync.cc serverstats.cc nickelstub.cc fakeserver.cc nh_sim.cc main.cc
+MOCS   := nickelsync.h serverstats.h nickelstub.h
 OBJS   := $(addprefix $(BUILD)/,$(SRCS:.cc=.o)) $(addprefix $(BUILD)/moc_,$(MOCS:.h=.o)) $(BUILD)/qrc_sim.o
 TARGET := nickelsync-sim
 

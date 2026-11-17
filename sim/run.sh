@@ -62,6 +62,15 @@ if [ "${1:-}" = "--all" ]; then
     run wifi-fail           --wifi fail
     run bar-hardcover       --bar-icons hardcover
     run bar-crowded         --bar-icons hardcover,kpm,other
+    run stats-ok            --pick none --wifi on
+    run stats-wifi-off      --pick none
+    run stats-slow          --pick none --wifi on --stats slow
+    run stats-error         --pick none --wifi on --stats error   --expect-stats error
+    run stats-missing       --pick none --wifi on --stats missing --expect-stats error
+    run stats-timeout       --pick none --wifi on --stats timeout --expect-stats error
+    run stats-wifi-fail     --pick none --wifi fail               --expect-stats error
+    run stats-store         --pick none --stats store             --expect-stats none
+    run stats-sideloaded    --pick none --book file               --expect-stats none
     exit $rc
 fi
 

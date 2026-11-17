@@ -87,6 +87,28 @@ Limits:
 - Nickel itself sends the position when you leave the book or connect USB. So after you cancel the prompt, the Kobo position goes to the server when you leave the book.
 - With `QuickSync`, NickelSync cannot see when Nickel finishes the upload. If `RestoreWifi` turns Wi-Fi off again, NickelSync first waits 15 seconds. During this wait, **Sync now** shows "Sync already running".
 
+## Server stats
+
+The NickelSync page also shows the reading state that the server has for the open book. This part is read-only. It is below the buttons, under "On the server":
+
+| Field | Content |
+|---|---|
+| Position | The percent of the book and the percent of the chapter. |
+| Position changed | The time of the last change of the position on the server. |
+| Reading time | The time spent and the estimated time left. |
+| Location | The raw location, for example `kobo.18.2`, and its type and file. |
+
+The page opens at once and shows "Loading the server stats". The stats replace this message when the server answers. If Wi-Fi is off, the page connects Wi-Fi first. When you close the page, NickelSync turns Wi-Fi off again if `RestoreWifi=true`. If you tap a page button, the sync turns Wi-Fi off at its end.
+
+The page sends `GET .../v1/library/<book>/state` to the `api_endpoint` in `Kobo eReader.conf`. Nickel uses the same endpoint for its sync. So the stats need no other credentials. The request does not send the Kobo device ID, so the server does not change the state of the device.
+
+Limits:
+
+- The stats need a Calibre-Web sync server, an `api_endpoint` with `/kobo/` in it. With the Kobo store, the page shows "Server stats need a Calibre-Web sync server."
+- A sideloaded book has no server state. The page shows "This book is not synced with the server."
+- The server must answer within 15 seconds. Else the page shows an error.
+- The stats show the shared position of the server. Calibre-Web can keep a different position for each device. The page does not show these.
+
 ## Configuration
 
 The configuration file is `KOBOeReader/.adds/nickelsync/config.ini`. The file is optional. NickelSync reads it each time you tap **Sync now**, so a change has effect without a reboot.
@@ -147,7 +169,7 @@ Nickel shows each message in an `N3ToastView` window in the center of the screen
 NickelSync is designed so that it cannot stop the device from booting:
 
 - **No hooks.** NickelSync replaces no Nickel function. Before a reading menu shows, it only watches `/tmp/nickelsync` and checks the type of each Qt event in its event filter.
-- **Missing symbols.** If the firmware does not have a required Nickel function, NickelHook does not load the mod. Nickel starts as usual without it. The two functions for the reading position are optional. If a firmware does not have them, NickelSync runs the full sync only. The functions for the icon are also optional. If a firmware does not have them, the reading menu has no icon.
+- **Missing symbols.** If the firmware does not have a required Nickel function, NickelHook does not load the mod. Nickel starts as usual without it. The two functions for the reading position are optional. If a firmware does not have them, NickelSync runs the full sync only. The functions for the icon are also optional. If a firmware does not have them, the reading menu has no icon. The function for the server stats, `Content::getId()`, is optional too. If a firmware does not have it, the page shows "No open book." in place of the stats.
 - **Calls by name.** For the reading position, NickelSync calls Nickel slots and signals by name. If a name does not exist, the call fails without a crash.
 - **Crash at load.** If Nickel crashes within 15 seconds after it loads the mod, the NickelHook failsafe keeps the mod disabled on the next boot.
 - **Uninstall without a menu.** Connect the device over USB, delete `KOBOeReader/.adds/nickelsync/uninstall` and reboot.

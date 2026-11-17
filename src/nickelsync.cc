@@ -18,7 +18,8 @@
 // ReadingMenuView. Then it puts a TouchLabel into the bottomHorizontalLayout
 // bar, before the settingsIcon, as NickelHardcover does. On 4.46 that bar is
 // the top bar of the reading menu, and settingsIcon is the overflow icon. A
-// tap opens the NickelSync page, a full-screen N3Dialog.
+// tap opens the NickelSync page, a full-screen N3Dialog. The page also shows
+// the server stats of the open book (serverstats.cc).
 //
 // Boot safety: the mod hooks no Nickel function. Until a reading menu shows,
 // it only watches the trigger file and checks the type of each Qt event in the
@@ -42,6 +43,7 @@
 #include <NickelHook.h>
 
 #include "nickelsync.h"
+#include "serverstats.h"
 
 #define NS_DIR       "/mnt/onboard/.adds/nickelsync"
 #define NS_CONFIG    NS_DIR "/config.ini"
@@ -106,6 +108,9 @@ static void (*N3ButtonLabel__constructor)(QLabel *, QWidget *);
 static QWidget *(*N3DialogFactory__getDialog)(QWidget *, bool);
 static void (*N3Dialog__setTitle)(QWidget *, QString const &);
 static QWidget *(*MainWindowController__pushView)(MainWindowController *, QWidget *);
+
+// Optional. If a firmware lacks it, the page shows no server stats.
+static QString (*Content__getId)(void const *); // the ContentID of a Volume
 
 static NickelSync *controller = nullptr;
 
@@ -189,7 +194,9 @@ void NickelSync::trigger(Mode mode) {
 
     WirelessWorkflowManager *wfm = WirelessWorkflowManager__sharedInstance();
     bool airplane = WirelessWorkflowManager__isAirplaneMode(wfm);
-    restoreAirplane = restoreWifi && airplane;
+    // The server stats of the page can have turned Wi-Fi on.
+    restoreAirplane = (restoreWifi && airplane) || statsAirplane;
+    statsAirplane = false;
     downloadStarted = false;
     position.clear();
     baseline = lastSyncTime();
@@ -501,6 +508,17 @@ static QLabel *pageLabel(QVBoxLayout *layout, char const *name, QString const &t
     return l;
 }
 
+// openBookId returns the ContentID of the open book, or an empty string. Call
+// it before the page hides the book.
+static QString openBookId() {
+    if (!Content__getId || !MainWindowController__viewWithObjectName || !ReadingView__getVolume)
+        return QString();
+    MainWindowController *mwc = MainWindowController__sharedInstance();
+    QWidget *rv = mwc ? MainWindowController__viewWithObjectName(mwc, QStringLiteral("ReadingView")) : nullptr;
+    void *reading = rv && rv->isVisible() ? rv->qt_metacast("ReadingView") : nullptr;
+    return reading ? Content__getId(ReadingView__getVolume(reading)) : QString();
+}
+
 // showPage opens the NickelSync page over the book. It follows the Dialog
 // class of NickelHardcover: Nickel draws the title and the close button.
 void NickelSync::showPage() {
@@ -517,7 +535,8 @@ void NickelSync::showPage() {
     QWidget *content = new QWidget();
     content->setStyleSheet(QStringLiteral("QLabel#nsKey { font-size: %1px; color: #666666; }"
                                           "QLabel#nsValue { font-size: %2px; }"
-                                          "QLabel#nsDesc { font-size: %1px; }")
+                                          "QLabel#nsDesc { font-size: %1px; }"
+                                          "QLabel#nsHeading { font-size: %2px; font-weight: bold; }")
                                .arg(px(30))
                                .arg(px(38)));
     QVBoxLayout *l = new QVBoxLayout(content);
@@ -548,6 +567,10 @@ void NickelSync::showPage() {
         l->addWidget(button, 0, Qt::AlignLeft);
         pageLabel(l, "nsDesc", QString::fromUtf8(b.desc));
     }
+    // Below the buttons, so that the buttons do not move when the stats load.
+    l->addSpacing(px(56));
+    ServerStats *stats = new ServerStats(openBookId(), px(12));
+    l->addWidget(stats);
     l->addStretch(1);
 
     page = N3DialogFactory__getDialog(content, true);
@@ -555,8 +578,37 @@ void NickelSync::showPage() {
     page->setFixedSize(screen);
     MainWindowController__pushView(MainWindowController__sharedInstance(), page);
     connect(page, SIGNAL(closeTapped()), page, SLOT(deleteLater()));
+    // Queued, so that Nickel shows the book again before a sync starts.
+    connect(page, SIGNAL(destroyed()), this, SLOT(onPageClosed()), Qt::QueuedConnection);
     page->show();
     nh_log("NickelSync: PAGE: opened, %dx%d", screen.width(), screen.height());
+    startStats(stats);
+}
+
+// startStats loads the server stats. If Wi-Fi is off, it connects Wi-Fi first,
+// and onPageClosed turns it off again.
+void NickelSync::startStats(ServerStats *stats) {
+    if (!stats->needsNetwork())
+        return;
+    // Without the managers, try the request. It fails with an error if Wi-Fi is off.
+    WirelessManager *wm = WirelessManager__sharedInstance();
+    WirelessWorkflowManager *wfm = WirelessWorkflowManager__sharedInstance();
+    if (!wm || !wfm || WirelessManager__connected(wm)) {
+        stats->load();
+        return;
+    }
+    QSettings cfg(QStringLiteral(NS_CONFIG), QSettings::IniFormat);
+    int connectTimeout = qBound(10, cfg.value("NickelSync/ConnectTimeout", 60).toInt(), 180);
+    stats->waitForWifi(wm, connectTimeout * 1000);
+    // A running sync connects Wi-Fi itself, and restores it.
+    if (state != Idle)
+        return;
+    if (WirelessWorkflowManager__isAirplaneMode(wfm)) {
+        statsAirplane = cfg.value("NickelSync/RestoreWifi", true).toBool();
+        WirelessWorkflowManager__setAirplaneMode(wfm, false);
+    }
+    nh_log("NickelSync: STATS: connecting Wi-Fi");
+    WirelessWorkflowManager__connectWirelessSilently(wfm);
 }
 
 // onPageButton closes the page and starts the sync when the page is gone. The
@@ -567,12 +619,23 @@ void NickelSync::onPageButton() {
     if (!button || !page)
         return;
     pending = Mode(button->property("nsMode").toInt());
-    // Queued, so that Nickel shows the book again before the sync starts.
-    connect(page, SIGNAL(destroyed()), this, SLOT(startPending()), Qt::QueuedConnection);
+    syncOnClose = true;
     page->deleteLater();
 }
 
-void NickelSync::startPending() { trigger(pending); }
+// onPageClosed starts the sync of a page button. Then, if no sync runs, it
+// turns Wi-Fi off again if the server stats turned it on.
+void NickelSync::onPageClosed() {
+    if (syncOnClose) {
+        syncOnClose = false;
+        trigger(pending);
+    }
+    if (statsAirplane && state == Idle) {
+        statsAirplane = false;
+        restoreAirplane = true;
+        restoreAirplaneMode();
+    }
+}
 
 // moveToast moves each NickelSync toast to the top of the screen before
 // Nickel draws it. Nickel centers a toast, so it covers the centered "Sync to
@@ -669,6 +732,7 @@ static struct nh_dlsym NickelSyncDlsym[] = {
     { .name = "_ZN15N3DialogFactory9getDialogEP7QWidgetb",                   .out = nh_symoutptr(N3DialogFactory__getDialog),               .desc = "reading menu icon", .optional = true },
     { .name = "_ZN8N3Dialog8setTitleERK7QString",                            .out = nh_symoutptr(N3Dialog__setTitle),                       .desc = "reading menu icon", .optional = true },
     { .name = "_ZN20MainWindowController8pushViewEP7QWidget",                .out = nh_symoutptr(MainWindowController__pushView),           .desc = "reading menu icon", .optional = true },
+    { .name = "_ZNK7Content5getIdEv",                                        .out = nh_symoutptr(Content__getId),                           .desc = "server stats", .optional = true },
     {0},
 };
 // clang-format on

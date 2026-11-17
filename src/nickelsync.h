@@ -9,6 +9,8 @@
 #include <QTimer>
 #include <QWidget>
 
+class ServerStats;
+
 // NickelSync starts a native Kobo sync from its icon in the reading menu, or
 // when the trigger file changes. A NickelMenu item can write the trigger file.
 // Inside a book, it also gets and sends the reading position of the open
@@ -29,7 +31,7 @@ public:
 private Q_SLOTS:
     void showPage();
     void onPageButton();
-    void startPending();
+    void onPageClosed();
     void onConnected();
     void onConnectFailed();
     void onPositionReceived();
@@ -44,6 +46,7 @@ private:
 
     bool wire();
     void addIcon(QWidget *menuView);
+    void startStats(ServerStats *stats);
     void moveToast(QObject *obj);
     QObject *openBook();
     void startPull();
@@ -66,6 +69,8 @@ private:
     QStringList toasts;     // the main texts of toasts that Nickel did not show yet
     QPointer<QWidget> page; // the open NickelSync page
     Mode pending = FromConfig; // the sync to start when the page closes
+    bool syncOnClose = false;  // a page button was tapped
+    bool statsAirplane = false; // the server stats turned airplane mode off
     QString lastResult;     // the result of the last sync since Nickel started
     QTimer timeout;
     QTimer settle;
