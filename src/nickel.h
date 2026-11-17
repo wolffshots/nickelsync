@@ -35,4 +35,9 @@ extern QString (*Content__getAttribution)(void const *);
 // the NickelSync page. nickelsync.cc defines it.
 void openSubPage(QWidget *page);
 
+// followDarkMode makes page, an N3Dialog, white on black when the open book
+// uses dark mode. content is the widget of the page that NickelSync made.
+// Call it before the page shows. nickelsync.cc defines it.
+void followDarkMode(QWidget *page, QWidget *content);
+
 #endif

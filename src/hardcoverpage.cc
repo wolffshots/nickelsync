@@ -256,6 +256,7 @@ QWidget *Hardcover::newPage(QString const &title, QWidget *&content) {
     QWidget *page = N3DialogFactory__getDialog(content, true);
     N3Dialog__setTitle(page, title);
     page->setFixedSize(screen);
+    followDarkMode(page, content);
     return page;
 }
 

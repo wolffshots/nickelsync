@@ -49,6 +49,7 @@
 //                       token that the mock rejects, so NickelSync refreshes it.
 //                       The mock server hcmock.py must run (run.sh starts it).
 //   --isbn ISBN         the ISBN of the open book in the sim KoboReader.sqlite
+//   --dark              the open book uses dark mode
 //   --flush-log         log each paint pass of the Kobo window. With --steps,
 //                       check the paint passes of each step (exit code 18).
 //   --steps "A;B;..."   for --screenshot: after the NickelSync page opens, run
@@ -58,7 +59,8 @@
 //                       the screen. "back" and "close" tap the back or close
 //                       button of the top page. "closed" checks that no page
 //                       is left. "nohit:TEXT" checks that the button has no
-//                       hit state. A png follows each tap and wait.
+//                       hit state. "dark" checks that the top page is white
+//                       on black. A png follows each tap and wait.
 //
 // Exit codes in --screenshot mode: 0 pass, 3 no icon in the reading menu,
 // 4 page button not found, 5 a NickelSync toast was not moved to the top,
@@ -70,7 +72,8 @@
 // button left a NickelSync page open, 16 the Hardcover button does not match
 // the Hardcover setting, 17 the back button did not close its page, 18 with
 // --flush-log, a step made more than one large paint pass or a repeated pass,
-// 19 a button that opens a page has the hit state (nohit: step).
+// 19 a button that opens a page has the hit state (nohit: step), 20 a page is
+// not white on black in dark mode (dark step).
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
@@ -455,6 +458,23 @@ static void runStep(QStringList const &steps, int i) {
         std::fprintf(stderr, "sim: step %s: ok\n", qPrintable(s));
         return runStep(steps, i + 1);
     }
+    if (s == QLatin1String("dark")) {
+        // The page background, the text of a bordered button and its border
+        // must be light on black.
+        N3Dialog *d = topDialog();
+        QImage img = d ? d->grab().toImage() : QImage();
+        bool ok = !img.isNull() && qGray(img.pixel(img.width() / 2, img.height() - 5)) < 64;
+        for (N3ButtonLabel *b : d ? d->findChildren<N3ButtonLabel *>() : QList<N3ButtonLabel *>()) {
+            if (!ok || !b->isVisible() || b->property("borderedButton") != QVariant(true))
+                continue;
+            QPoint edge = b->mapTo(d, QPoint(b->width() / 2, 0));
+            ok = qGray(img.pixel(edge)) > 192 && b->palette().color(QPalette::WindowText) == Qt::white;
+        }
+        if (!ok)
+            return fail(20, "a page is not white on black in dark mode");
+        std::fprintf(stderr, "sim: step dark: ok\n");
+        return runStep(steps, i + 1);
+    }
     if (s == QLatin1String("closed")) {
         if (!nickelstub_mainWindow()->findChildren<N3Dialog *>().isEmpty())
             return fail(15, "the close button left a NickelSync page open");
@@ -614,6 +634,8 @@ int main(int argc, char **argv) {
         } else if (a == "--auto") {
             autoKind = v;
             i++;
+        } else if (a == "--dark") {
+            simOptions.dark = true;
         } else if (a == "--no-retry") {
             simOptions.suspendRetry = false;
         } else if (a == "--expect") {

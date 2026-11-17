@@ -46,6 +46,7 @@ struct SimOptions {
     bool suspendRetry = true; // PowerManager tries to suspend again after a veto
     QString title = QStringLiteral("The Lighthouse Keeper"); // the title of the open book
     QString author = QStringLiteral("Mara Quill");
+    bool dark = false; // the open book uses dark mode
 };
 extern SimOptions simOptions;
 

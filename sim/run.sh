@@ -120,6 +120,13 @@ if [ "${1:-}" = "--all" ]; then
     # Each page change is one large paint pass, and a value tap is a small one.
     run pages-flush         --wifi on --hardcover signed-in --stats store --flush-log \
                             --steps "nohit:Settings;nohit:Hardcover;Settings;60 s;90 s;back;Hardcover;back;Hardcover;close;closed"
+    # Dark mode: each page is white on black, with white button borders. The
+    # dark step renders the page, which adds a paint pass, so a second run
+    # checks the paint passes.
+    run dark                --wifi on --hardcover signed-in --stats store --dark \
+                            --steps "dark;Settings;dark;back;Hardcover;dark;close;closed"
+    run dark-flush          --wifi on --hardcover signed-in --stats store --dark --flush-log \
+                            --steps "Settings;60 s;back;Hardcover;back;Hardcover;close;closed"
     run hc-signout          --wifi on --hardcover signed-in --steps "Hardcover;Sign out;expect:Sign in to Hardcover"
     exit $rc
 fi

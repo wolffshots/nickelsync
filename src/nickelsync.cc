@@ -37,6 +37,7 @@
 #include <QFile>
 #include <QFileSystemWatcher>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QLabel>
 #include <QPixmap>
 #include <QScreen>
@@ -635,6 +636,7 @@ void NickelSync::showPage() {
     page = N3DialogFactory__getDialog(content, true);
     N3Dialog__setTitle(page, QStringLiteral("NickelSync"));
     page->setFixedSize(screen);
+    followDarkMode(page, content);
     MainWindowController__pushView(MainWindowController__sharedInstance(), page);
     connect(page, SIGNAL(closeTapped()), page, SLOT(deleteLater()));
     connect(page, SIGNAL(backTapped()), page, SLOT(deleteLater()));
@@ -689,6 +691,43 @@ void openSubPage(QWidget *sub) {
     else
         QObject::connect(sub, SIGNAL(closeTapped()), sub, SLOT(deleteLater()));
     sub->show();
+}
+
+// followDarkMode does for a NickelSync page what Nickel does for the reading
+// view. ReadingView::showEvent sets the property darkMode on a child widget of
+// the reading view. A rule of the Nickel style sheet then paints that widget
+// and its children white on black:
+//   *[darkMode=true], *[darkMode=true] * { color: white; background-color: black; }
+// Nickel has no such rule for its own N3Dialog pages, so the page needs two
+// more changes. Bordered buttons get a white border. The icons of the title
+// bar (back and close) get inverted pixmaps.
+void followDarkMode(QWidget *page, QWidget *content) {
+    if (!MainWindowController__viewWithObjectName)
+        return;
+    QWidget *rv = MainWindowController__viewWithObjectName(MainWindowController__sharedInstance(),
+                                                           QStringLiteral("ReadingView"));
+    if (!rv)
+        return;
+    bool dark = false;
+    for (QWidget *w : rv->findChildren<QWidget *>())
+        if (w->property("darkMode").toBool()) {
+            dark = true;
+            break;
+        }
+    if (!dark)
+        return;
+    page->setProperty("darkMode", true);
+    // setStyleSheet also polishes the page and its children again, so that
+    // the new property applies to the widgets that the style has polished.
+    page->setStyleSheet(QStringLiteral("N3ButtonLabel[borderedButton=true] { border-color: white; }"));
+    for (QLabel *l : page->findChildren<QLabel *>()) {
+        if (content->isAncestorOf(l) || !l->pixmap() || l->pixmap()->isNull())
+            continue;
+        QImage icon = l->pixmap()->toImage();
+        icon.invertPixels();
+        l->setPixmap(QPixmap::fromImage(icon));
+    }
+    nh_log("NickelSync: PAGE: dark mode");
 }
 
 // addSubPage makes the close button of sub close the whole NickelSync stack.

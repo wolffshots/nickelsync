@@ -37,7 +37,7 @@ In a book, tap the center of the page to open the reading menu. Tap the sync ico
 | Sync now | Syncs the reading position, then runs the full sync. The `QuickSync` setting does not apply. |
 | Sync reading position | Syncs only the reading position, as with `QuickSync=true`. See [Quick sync](#quick-sync). |
 
-The **Settings** button opens the settings page. See [Configuration](#configuration). With `Hardcover=true`, a **Hardcover** button next to it opens the Hardcover page. See [Hardcover](#hardcover). On these pages, the back button goes back to the NickelSync page. The close button closes all NickelSync pages and shows the book again.
+The **Settings** button opens the settings page. See [Configuration](#configuration). With `Hardcover=true`, a **Hardcover** button next to it opens the Hardcover page. See [Hardcover](#hardcover). On these pages, the back button goes back to the NickelSync page. The close button closes all NickelSync pages and shows the book again. If the book uses dark mode, the NickelSync pages are white on black.
 
 With NickelMenu, you can also tap **Sync now** in the NickelMenu menu of a book or of the home screen. This item uses the `QuickSync` setting.
 

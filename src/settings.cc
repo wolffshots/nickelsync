@@ -398,6 +398,7 @@ void SettingsPage::open() {
     page = N3DialogFactory__getDialog(content, true);
     N3Dialog__setTitle(page, QStringLiteral("NickelSync settings"));
     page->setFixedSize(screen);
+    followDarkMode(page, content);
     refresh();
     openSubPage(page);
     nh_log("NickelSync: SETTINGS: page opened");

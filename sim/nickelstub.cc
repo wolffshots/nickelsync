@@ -1,6 +1,7 @@
 // Desktop stand-ins for Nickel. See nickelstub.h.
 #include "nickelstub.h"
 
+#include <QApplication>
 #include <QDateTime>
 #include <QDebug>
 #include <QFont>
@@ -414,18 +415,12 @@ void TouchLabel::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 N3ButtonLabel::N3ButtonLabel(QWidget *parent) : TouchLabel(parent) {
-    // As on the device: a button without a style property is italic text.
-    setStyleSheet(QStringLiteral("N3ButtonLabel { border: none; font-style: italic; padding: 12px 0px; }"
-                                 "N3ButtonLabel[borderedButton=\"true\"] { border: 2px solid black; border-radius: 6px;"
-                                 " padding: 12px 28px; font-style: normal; }"
-                                 "N3ButtonLabel[primaryButton=\"true\"] { border: 2px solid black; border-radius: 6px;"
-                                 " padding: 12px 28px; font-style: normal; background: black; color: white; }"));
+    // The application style sheet has the button styles (nickelstub_mainWindow).
     setFont(uiFont(21, true));
 }
 
 N3Dialog::N3Dialog(QWidget *content) : QFrame(nullptr) {
     setObjectName(QStringLiteral("N3Dialog"));
-    setStyleSheet(QStringLiteral("N3Dialog { background: white; } #n3TitleBar { border-bottom: 2px solid black; }"));
     QVBoxLayout *l = new QVBoxLayout(this);
     l->setContentsMargins(0, 0, 0, 0);
     l->setSpacing(0);
@@ -581,6 +576,18 @@ QWidget *nickelstub_mainWindow() {
         mainWindowController = new MainWindowController();
         powerWorkflowManager = new N3PowerWorkflowManager();
         powerManager = new PowerManager();
+        // Nickel keeps its styles in the application style sheet. A page style
+        // sheet overrides them. As on the device: a button without a style
+        // property is italic text, and the darkMode property makes a widget
+        // and its children white on black.
+        qApp->setStyleSheet(QStringLiteral(
+            "*[darkMode=true], *[darkMode=true] * { color: white; background-color: black; }"
+            "N3Dialog { background: white; } #n3TitleBar { border-bottom: 2px solid black; }"
+            "N3ButtonLabel { border: none; font-style: italic; padding: 12px 0px; }"
+            "N3ButtonLabel[borderedButton=\"true\"] { border: 2px solid black; border-radius: 6px;"
+            " padding: 12px 28px; font-style: normal; }"
+            "N3ButtonLabel[primaryButton=\"true\"] { border: 2px solid black; border-radius: 6px;"
+            " padding: 12px 28px; font-style: normal; background: black; color: white; }"));
         mainWindow = new QWidget();
         mainWindow->setObjectName(QStringLiteral("MainWindow"));
         mainWindow->setWindowTitle(QStringLiteral("NickelSync sim"));
@@ -588,6 +595,11 @@ QWidget *nickelstub_mainWindow() {
         QVBoxLayout *l = new QVBoxLayout(mainWindow);
         l->setContentsMargins(0, 0, 0, 0);
         l->addWidget(readingView);
+        // ReadingView::showEvent sets darkMode on a child widget of the
+        // reading view. The sim reading view has no child widget at the start,
+        // so it gets an empty one.
+        if (simOptions.dark)
+            (new QWidget(readingView))->setProperty("darkMode", true);
     }
     return mainWindow;
 }
