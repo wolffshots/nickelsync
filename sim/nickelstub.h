@@ -32,8 +32,13 @@ enum SyncType { Full };
 struct SimOptions {
     enum Wifi { WifiOff, WifiOn, WifiFail };
     enum Server { ServerSame, ServerNewer, ServerNone };
+    // The answer of the fake server to the server stats request (fakeserver.cc).
+    // Store: the sync server is the Kobo store, so NickelSync sends nothing.
+    enum Stats { StatsOk, StatsSlow, StatsError, StatsMissing, StatsTimeout, StatsStore };
     Wifi wifi = WifiOff;
     Server server = ServerSame;
+    Stats stats = StatsOk;
+    QString bookId = QStringLiteral("5f0c8a2e-6b1d-4c7e-9a3f-2d8b1e7c4a90"); // the ContentID of the open book
     int connectMs = 2000;
     int pullMs = 1000;
     int syncMs = 3000;
@@ -61,6 +66,9 @@ void *nickelstub_resolve(const char *name);
 QWidget *nickelstub_mainWindow();
 class ReadingView *nickelstub_readingView();
 class N3PowerWorkflowManager *nickelstub_power();
+// fakeserver_start starts the fake Calibre-Web and returns the api_endpoint
+// for the Nickel config.
+QString fakeserver_start();
 bool nickelstub_airplaneMode();
 
 // ---- sync and Wi-Fi ----------------------------------------------------

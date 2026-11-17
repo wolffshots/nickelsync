@@ -86,6 +86,15 @@ if [ "${1:-}" = "--all" ]; then
     run auto-sleep-quick    --auto sleep --quick --expect pulls=0,pushes=1,syncs=0,toasts=0,suspended=1
     run auto-sleep-no-retry --auto sleep --no-retry --expect pushes=1,syncs=1,toasts=0,vetoes=1,suspended=1
     run auto-off            --auto off --expect pulls=0,pushes=0,syncs=0,toasts=0,vetoes=0,suspended=1
+    run stats-ok            --pick none --wifi on
+    run stats-wifi-off      --pick none
+    run stats-slow          --pick none --wifi on --stats slow
+    run stats-error         --pick none --wifi on --stats error   --expect-stats error
+    run stats-missing       --pick none --wifi on --stats missing --expect-stats error
+    run stats-timeout       --pick none --wifi on --stats timeout --expect-stats error
+    run stats-wifi-fail     --pick none --wifi fail               --expect-stats error
+    run stats-store         --pick none --stats store             --expect-stats none
+    run stats-sideloaded    --pick none --book file               --expect-stats none
     exit $rc
 fi
 

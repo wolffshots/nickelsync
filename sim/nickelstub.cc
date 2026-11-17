@@ -472,6 +472,7 @@ static QWidget *MainWindowController__viewWithObjectName(QObject const *, QStrin
     return mainWindow ? mainWindow->findChild<QWidget *>(name) : nullptr;
 }
 static void const *ReadingView__getVolume(void const *) { return &volume; }
+static QString Content__getId(void const *) { return simOptions.bookId; }
 
 // nickelsync.cc allocates these objects with calloc and calls the Nickel
 // constructor in place. The sizes are the sizes that it allocates.
@@ -539,6 +540,7 @@ static const struct {
     SYM("_ZNK22N3PowerWorkflowManager8sleepingEv", N3PowerWorkflowManager__sleeping),
     SYM("_ZN20ScopedSuspendDisableC1Ev", ScopedSuspendDisable__constructor),
     SYM("_ZN12PowerManager14sharedInstanceEv", PowerManager__sharedInstance),
+    SYM("_ZNK7Content5getIdEv", Content__getId),
 };
 
 void *nickelstub_resolve(const char *name) {
@@ -571,4 +573,5 @@ QWidget *nickelstub_mainWindow() {
 
 ReadingView *nickelstub_readingView() { return readingView; }
 N3PowerWorkflowManager *nickelstub_power() { return powerWorkflowManager; }
+
 bool nickelstub_airplaneMode() { return workflowManager->airplaneMode; }

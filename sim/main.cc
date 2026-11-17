@@ -15,7 +15,19 @@
 //   --screenshot DIR    open the reading menu, tap the icon, tap a button on
 //                       the NickelSync page, save a png for each step and
 //                       toast, then exit (run.sh uses the VNC platform)
-//   --pick TEXT         the page button for --screenshot (default "Sync now")
+//   --pick TEXT         the page button for --screenshot (default "Sync now").
+//                       "none" taps no button: the run waits for the server
+//                       stats, closes the page and checks that Wi-Fi is off
+//                       again if it was off at the start (--wifi off or fail).
+//   --stats ok|slow|error|missing|timeout|store
+//                       the answer of the fake Calibre-Web to the server stats
+//                       request (fakeserver.cc): ok after 0.4 s, slow (ok after
+//                       6 s), error (HTTP 500), missing (HTTP 404), timeout (no
+//                       answer, NickelSync waits 15 s), store (the sync server
+//                       is the Kobo store, so NickelSync sends nothing)
+//   --book file         the open book is sideloaded (a file:// ContentID)
+//   --expect-stats S    with --pick none: the server stats state to expect,
+//                       done, error or none (default done)
 //   --config FILE       copy FILE to config.ini before the run. Without it,
 //                       there is no config.ini (unless --quick or --auto).
 //   --settings K1,K2    for --screenshot: open the settings page, tap the
@@ -33,7 +45,9 @@
 // Exit codes in --screenshot mode: 0 pass, 3 no icon in the reading menu,
 // 4 page button not found, 5 a NickelSync toast was not moved to the top,
 // 6 no result toast within 90 s, 7 setting button not found, 8 a value
-// changed when the settings page opened again, 9 an --expect count differs.
+// changed when the settings page opened again, 9 an --expect count differs,
+// 10 the server stats state is not the expected state, 11 Wi-Fi is still on
+// after the page closed.
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -167,21 +181,47 @@ static void runSettings(QStringList const &keys) {
     });
 }
 
-static void runScreenshot(QString const &pick, QStringList const &settings) {
+// waitStats waits for the server stats to load, closes the page and checks
+// the Wi-Fi state. It is the end of a --pick none run.
+static void waitStats(QString const &expect) {
+    QWidget *stats = nickelstub_mainWindow()->findChild<QWidget *>(QStringLiteral("nsServerStats"));
+    QString state = stats ? stats->property("nsStatsState").toString() : QStringLiteral("missing");
+    if (state == QLatin1String("loading")) {
+        QTimer::singleShot(200, [expect] { waitStats(expect); });
+        return;
+    }
+    std::fprintf(stderr, "sim: server stats state: %s\n", qPrintable(state));
+    shot(QStringLiteral("server stats ") + state);
+    if (state != expect)
+        return fail(10, "the server stats state is not the expected state");
+    QWidget *page = nickelstub_mainWindow()->findChild<QWidget *>(QStringLiteral("N3Dialog"));
+    if (page)
+        QMetaObject::invokeMethod(page, "closeTapped");
+    QTimer::singleShot(1000, [] {
+        shot(QStringLiteral("closed"));
+        if (simOptions.wifi != SimOptions::WifiOn && !nickelstub_airplaneMode())
+            return fail(11, "Wi-Fi is still on after the page closed");
+        QApplication::quit();
+    });
+}
+
+static void runScreenshot(QString const &pick, QStringList const &settings, QString const &expectStats) {
     QDir().mkpath(shotDir);
-    QTimer::singleShot(300, [pick, settings] {
+    QTimer::singleShot(300, [pick, settings, expectStats] {
         shot(QStringLiteral("page"));
         nickelstub_readingView()->showMenu();
-        QTimer::singleShot(300, [pick, settings] {
+        QTimer::singleShot(300, [pick, settings, expectStats] {
             shot(QStringLiteral("reading menu"));
             QLabel *icon = nickelstub_mainWindow()->findChild<QLabel *>(QStringLiteral("nickelsyncIcon"));
             if (!icon)
                 return fail(3, "no nickelsyncIcon in the reading menu");
             QMetaObject::invokeMethod(icon, "tapped", Q_ARG(bool, false));
-            QTimer::singleShot(300, [pick, settings] {
+            QTimer::singleShot(300, [pick, settings, expectStats] {
                 shot(QStringLiteral("nickelsync page"));
                 if (!settings.isEmpty())
                     return runSettings(settings);
+                if (pick == QLatin1String("none"))
+                    return waitStats(expectStats);
                 if (N3ButtonLabel *b = findButton(pick))
                     QMetaObject::invokeMethod(b, "tapped", Q_ARG(bool, false));
                 else
@@ -247,6 +287,7 @@ int main(int argc, char **argv) {
     QStringList args = app.arguments();
     QSize size(758, 1008);
     QString pick = QStringLiteral("Sync now");
+    QString expectStats = QStringLiteral("done");
     bool quick = false;
     QString config;
     QStringList settings;
@@ -272,6 +313,21 @@ int main(int argc, char **argv) {
             i++;
         } else if (a == "--bar-icons") {
             simOptions.barIcons = v.split(',', QString::SkipEmptyParts);
+            i++;
+        } else if (a == "--stats") {
+            QStringList modes = {"ok", "slow", "error", "missing", "timeout", "store"};
+            if (!modes.contains(v)) {
+                std::fprintf(stderr, "sim: unknown --stats %s\n", qPrintable(v));
+                return 2;
+            }
+            simOptions.stats = SimOptions::Stats(modes.indexOf(v));
+            i++;
+        } else if (a == "--book") {
+            if (v == "file")
+                simOptions.bookId = QStringLiteral("file:///mnt/onboard/books/lighthouse.kepub.epub");
+            i++;
+        } else if (a == "--expect-stats") {
+            expectStats = v;
             i++;
         } else if (a == "--quick") {
             quick = true;
@@ -318,6 +374,12 @@ int main(int argc, char **argv) {
             cfg.setValue(QStringLiteral("NickelSync/AutoSyncOnSleep"), autoKind == QLatin1String("sleep"));
         }
     }
+    // The sync server of Nickel. The server stats read it.
+    {
+        QDir().mkpath(QStringLiteral("/mnt/onboard/.kobo/Kobo"));
+        QSettings conf(QStringLiteral("/mnt/onboard/.kobo/Kobo/Kobo eReader.conf"), QSettings::IniFormat);
+        conf.setValue(QStringLiteral("OneStoreServices/api_endpoint"), fakeserver_start());
+    }
 
     QWidget *w = nickelstub_mainWindow();
     w->setFixedSize(size);
@@ -341,7 +403,7 @@ int main(int argc, char **argv) {
         runAuto(autoKind, expect);
     } else if (!shotDir.isEmpty()) {
         app.installEventFilter(new ShotFilter());
-        runScreenshot(pick, settings);
+        runScreenshot(pick, settings, expectStats);
     }
     w->show();
     int rc = app.exec();
