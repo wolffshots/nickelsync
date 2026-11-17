@@ -21,10 +21,18 @@ class NickelSync : public QObject {
 public:
     // FromConfig uses QuickSync from the config. Full and Quick override it.
     enum Mode { FromConfig, Full, Quick };
+    // Origin is what started a sync. An automatic sync shows no toasts.
+    enum Origin { Manual, AutoOpen, AutoSleep };
 
     explicit NickelSync(QObject *parent = nullptr);
-    void trigger(Mode mode = FromConfig);
+    void trigger(Mode mode = FromConfig, Origin from = Manual);
+    bool busy() const { return state != Idle; }
     bool eventFilter(QObject *obj, QEvent *event) override;
+    void log(QString const &line);
+
+Q_SIGNALS:
+    // ended comes when a sync that trigger() started is done.
+    void ended();
 
 private Q_SLOTS:
     void showPage();
@@ -52,9 +60,9 @@ private:
     void finish(QString const &result, QString const &detail = QString());
     void restoreAirplaneMode();
     void toast(QString const &main, QString const &sub = QString());
-    void log(QString const &line);
 
     State state = Idle;
+    Origin origin = Manual;
     bool wired = false;
     bool pullWired = false;
     bool restoreAirplane = false;

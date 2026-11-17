@@ -16,12 +16,22 @@
 //                       the NickelSync page, save a png for each step and
 //                       toast, then exit (run.sh uses the VNC platform)
 //   --pick TEXT         the page button for --screenshot (default "Sync now")
+//   --auto open|sleep|off
+//                       with --screenshot: an auto-sync scenario instead of the
+//                       taps. open: a book loads (AutoSyncOnOpen=true). sleep:
+//                       the device goes to sleep (AutoSyncOnSleep=true). off:
+//                       both events, with both keys false.
+//   --no-retry          PowerManager does not try to suspend again after a veto
+//   --expect K=N,...    with --auto: the counts to check at the end. Keys:
+//                       pulls, pushes, syncs, toasts, vetoes, suspended (0 or 1).
 //
 // Exit codes in --screenshot mode: 0 pass, 3 no icon in the reading menu,
 // 4 page button not found, 5 a NickelSync toast was not moved to the top,
-// 6 no result toast within 90 s.
+// 6 no result toast within 90 s, 7 an --expect count differs.
 #include <QApplication>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QMap>
 #include <QLabel>
 #include <QMenu>
 #include <QPainter>
@@ -119,12 +129,64 @@ static void runScreenshot(QString const &pick) {
     QTimer::singleShot(90 * 1000, [] { fail(6, "no result toast within 90 s"); });
 }
 
+// counts returns the SimStats values that --expect can check.
+static QMap<QString, int> counts() {
+    QMap<QString, int> c;
+    c["pulls"] = simStats.pulls;
+    c["pushes"] = simStats.pushes;
+    c["syncs"] = simStats.syncs;
+    c["toasts"] = simStats.toasts;
+    c["suspended"] = simStats.suspended;
+    c["vetoes"] = simStats.vetoes;
+    return c;
+}
+
+// runAuto plays an auto-sync scenario. It ends when the counts match
+// --expect, Wi-Fi is back as it was, and the scenario has run for 4 s, or
+// after 85 s. Then it compares the counts.
+static void runAuto(QString const &kind, QMap<QString, int> const &expect) {
+    QDir().mkpath(shotDir);
+    bool airplane = nickelstub_airplaneMode();
+    QTimer::singleShot(300, [kind] {
+        shot(QStringLiteral("book"));
+        if (kind != QLatin1String("sleep"))
+            Q_EMIT nickelstub_readingView()->readerDoneLoading();
+    });
+    if (kind != QLatin1String("open"))
+        QTimer::singleShot(600, [] { nickelstub_power()->sleep(); });
+    QElapsedTimer *clock = new QElapsedTimer();
+    clock->start();
+    QTimer *poll = new QTimer();
+    QObject::connect(poll, &QTimer::timeout, [=] {
+        QMap<QString, int> now = counts();
+        bool match = true;
+        for (auto it = expect.begin(); it != expect.end(); ++it)
+            match = match && now.value(it.key()) == it.value();
+        bool settled = clock->elapsed() > 4000 && match && nickelstub_airplaneMode() == airplane;
+        if (!settled && clock->elapsed() < 85 * 1000)
+            return;
+        poll->stop();
+        shot(QStringLiteral("end"));
+        QStringList got;
+        for (auto it = now.begin(); it != now.end(); ++it)
+            got << QStringLiteral("%1=%2").arg(it.key()).arg(it.value());
+        std::fprintf(stderr, "sim: counts %s\n", qPrintable(got.join(',')));
+        if (!match)
+            fail(7, "an --expect count differs");
+        else
+            QTimer::singleShot(0, qApp, &QApplication::quit);
+    });
+    poll->start(250);
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     QStringList args = app.arguments();
     QSize size(758, 1008);
     QString pick = QStringLiteral("Sync now");
     bool quick = false;
+    QString autoKind;
+    QMap<QString, int> expect;
     for (int i = 1; i < args.size(); i++) {
         QString a = args[i];
         QString v = i + 1 < args.size() ? args[i + 1] : QString();
@@ -154,6 +216,15 @@ int main(int argc, char **argv) {
         } else if (a == "--pick") {
             pick = v;
             i++;
+        } else if (a == "--auto") {
+            autoKind = v;
+            i++;
+        } else if (a == "--no-retry") {
+            simOptions.suspendRetry = false;
+        } else if (a == "--expect") {
+            for (QString const &kv : v.split(',', QString::SkipEmptyParts))
+                expect[kv.section('=', 0, 0)] = kv.section('=', 1).toInt();
+            i++;
         } else {
             std::fprintf(stderr, "sim: unknown option %s\n", qPrintable(a));
             return 2;
@@ -165,6 +236,8 @@ int main(int argc, char **argv) {
     {
         QSettings cfg(QStringLiteral("/mnt/onboard/.adds/nickelsync/config.ini"), QSettings::IniFormat);
         cfg.setValue(QStringLiteral("NickelSync/QuickSync"), quick);
+        cfg.setValue(QStringLiteral("NickelSync/AutoSyncOnOpen"), autoKind == QLatin1String("open"));
+        cfg.setValue(QStringLiteral("NickelSync/AutoSyncOnSleep"), autoKind == QLatin1String("sleep"));
     }
 
     QWidget *w = nickelstub_mainWindow();
@@ -185,7 +258,9 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    if (!shotDir.isEmpty()) {
+    if (!shotDir.isEmpty() && !autoKind.isEmpty()) {
+        runAuto(autoKind, expect);
+    } else if (!shotDir.isEmpty()) {
         app.installEventFilter(new ShotFilter());
         runScreenshot(pick);
     }

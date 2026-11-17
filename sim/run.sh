@@ -62,6 +62,14 @@ if [ "${1:-}" = "--all" ]; then
     run wifi-fail           --wifi fail
     run bar-hardcover       --bar-icons hardcover
     run bar-crowded         --bar-icons hardcover,kpm,other
+    # Auto-sync. NickelSync shows no toasts for these.
+    run auto-open           --auto open --expect pulls=1,pushes=1,syncs=0,toasts=0
+    run auto-open-newer     --auto open --server newer --expect pulls=1,pushes=0,syncs=0,toasts=0
+    run auto-open-wifi-on   --auto open --wifi on --expect pulls=0,pushes=0,syncs=0,toasts=0
+    run auto-sleep          --auto sleep --expect pulls=0,pushes=1,syncs=1,toasts=0,suspended=1
+    run auto-sleep-quick    --auto sleep --quick --expect pulls=0,pushes=1,syncs=0,toasts=0,suspended=1
+    run auto-sleep-no-retry --auto sleep --no-retry --expect pushes=1,syncs=1,toasts=0,vetoes=1,suspended=1
+    run auto-off            --auto off --expect pulls=0,pushes=0,syncs=0,toasts=0,vetoes=0,suspended=1
     exit $rc
 fi
 

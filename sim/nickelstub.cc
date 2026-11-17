@@ -18,6 +18,8 @@
 #include <new>
 
 SimOptions simOptions;
+SimStats simStats;
+int ScopedSuspendDisable::count = 0;
 
 #define NICKEL_CONF "/mnt/onboard/.kobo/Kobo/Kobo eReader.conf"
 
@@ -25,6 +27,8 @@ static N3SyncManager *syncManager;
 static WirelessManager *wirelessManager;
 static WirelessWorkflowManager *workflowManager;
 static MainWindowController *mainWindowController;
+static N3PowerWorkflowManager *powerWorkflowManager;
+static PowerManager *powerManager;
 static QWidget *mainWindow;
 static ReadingView *readingView;
 static Volume volume;
@@ -35,6 +39,7 @@ static void simLog(QString const &line) { qInfo().noquote() << "nickel(sim):" <<
 
 void N3SyncManager::silentSync() {
     simLog("N3SyncManager::silentSync");
+    simStats.syncs++;
     syncing = true;
     QTimer::singleShot(500, this, [this] { Q_EMIT syncStarted(SyncState::Full); });
     QTimer::singleShot(simOptions.syncMs, this, [this] {
@@ -57,6 +62,46 @@ void WirelessWorkflowManager::connectWirelessSilently() {
         wirelessManager->connected = true;
         Q_EMIT wirelessManager->networkConnected();
     });
+}
+
+// ---- sleep ---------------------------------------------------------------
+
+void N3PowerWorkflowManager::sleep() {
+    simLog("N3PowerWorkflowManager: aboutToSleep");
+    sleeping = true;
+    Q_EMIT aboutToSleep();
+    QLabel *screen = new QLabel(QStringLiteral("Sleeping"), mainWindow);
+    screen->setObjectName(QStringLiteral("sleepScreen"));
+    screen->setAlignment(Qt::AlignCenter);
+    screen->setStyleSheet(QStringLiteral("background: white; font-size: 40px;"));
+    screen->setGeometry(mainWindow->rect());
+    readingView->hide();
+    screen->show();
+    QTimer::singleShot(1000, powerManager, SLOT(suspend()));
+}
+
+void PowerManager::suspend() {
+    if (simStats.suspended)
+        return;
+    if (ScopedSuspendDisable::count > 0) {
+        simStats.vetoes++;
+        simLog("PowerManager::suspend: vetoed");
+        if (simOptions.suspendRetry)
+            QTimer::singleShot(1000, this, SLOT(suspend()));
+        return;
+    }
+    simLog("PowerManager::suspend: suspended");
+    simStats.suspended = true;
+}
+
+ScopedSuspendDisable::ScopedSuspendDisable() {
+    count++;
+    simLog("ScopedSuspendDisable: created");
+}
+
+ScopedSuspendDisable::~ScopedSuspendDisable() {
+    count--;
+    simLog("ScopedSuspendDisable: deleted");
 }
 
 // ---- main window and toasts --------------------------------------------
@@ -90,6 +135,7 @@ N3ToastView::N3ToastView(QWidget *parent, QString const &main, QString const &su
 // screen window, so that move() coordinates are screen coordinates, as on the
 // device.
 void MainWindowController::toast(QString const &main, QString const &sub, int ms) {
+    simStats.toasts++;
     simLog("toast: " + main + (sub.isEmpty() ? QString() : " / " + sub));
     queue.append(qMakePair(qMakePair(main, sub), ms));
     if (!showing)
@@ -149,6 +195,7 @@ ConfirmationDialog::ConfirmationDialog(QWidget *parent, QString const &title, QS
 // sends GET .../state. The sim answers after pullMs.
 void KepubBookReaderBase::onResume() {
     simLog("KepubBookReaderBase::onResume: GET .../state");
+    simStats.pulls++;
     if (simOptions.server == SimOptions::ServerNone)
         return;
     QTimer::singleShot(simOptions.pullMs, this, [] {
@@ -316,7 +363,10 @@ ReadingView::ReadingView(QWidget *parent) : QWidget(parent) {
     setObjectName(QStringLiteral("ReadingView"));
     new KepubBookReaderBase(this);
     connect(this, &ReadingView::saveBookmark, [] { simLog("ReadingView::saveBookmark"); });
-    connect(this, &ReadingView::sendBookmark, [] { simLog("ReadingView::sendBookmark: PUT .../state"); });
+    connect(this, &ReadingView::sendBookmark, [] {
+        simLog("ReadingView::sendBookmark: PUT .../state");
+        simStats.pushes++;
+    });
 }
 
 void ReadingView::showMenu() {
@@ -453,6 +503,13 @@ static QWidget *MainWindowController__pushView(QObject *, QWidget *view) {
     });
     return view;
 }
+static QObject *N3PowerWorkflowManager__sharedInstance() { return powerWorkflowManager; }
+static bool N3PowerWorkflowManager__sleeping(QObject const *p) { return static_cast<N3PowerWorkflowManager const *>(p)->sleeping; }
+static QObject *PowerManager__sharedInstance() { return powerManager; }
+static void ScopedSuspendDisable__constructor(QObject *mem) {
+    static_assert(sizeof(ScopedSuspendDisable) <= 64, "ScopedSuspendDisable does not fit");
+    new (mem) ScopedSuspendDisable();
+}
 
 #define SYM(mangled, fn) {mangled, reinterpret_cast<void *>(fn)}
 static const struct {
@@ -478,6 +535,10 @@ static const struct {
     SYM("_ZN15N3DialogFactory9getDialogEP7QWidgetb", N3DialogFactory__getDialog),
     SYM("_ZN8N3Dialog8setTitleERK7QString", N3Dialog__setTitle),
     SYM("_ZN20MainWindowController8pushViewEP7QWidget", MainWindowController__pushView),
+    SYM("_ZN22N3PowerWorkflowManager14sharedInstanceEv", N3PowerWorkflowManager__sharedInstance),
+    SYM("_ZNK22N3PowerWorkflowManager8sleepingEv", N3PowerWorkflowManager__sleeping),
+    SYM("_ZN20ScopedSuspendDisableC1Ev", ScopedSuspendDisable__constructor),
+    SYM("_ZN12PowerManager14sharedInstanceEv", PowerManager__sharedInstance),
 };
 
 void *nickelstub_resolve(const char *name) {
@@ -495,6 +556,8 @@ QWidget *nickelstub_mainWindow() {
         workflowManager = new WirelessWorkflowManager();
         workflowManager->airplaneMode = simOptions.wifi != SimOptions::WifiOn;
         mainWindowController = new MainWindowController();
+        powerWorkflowManager = new N3PowerWorkflowManager();
+        powerManager = new PowerManager();
         mainWindow = new QWidget();
         mainWindow->setObjectName(QStringLiteral("MainWindow"));
         mainWindow->setWindowTitle(QStringLiteral("NickelSync sim"));
@@ -507,3 +570,5 @@ QWidget *nickelstub_mainWindow() {
 }
 
 ReadingView *nickelstub_readingView() { return readingView; }
+N3PowerWorkflowManager *nickelstub_power() { return powerWorkflowManager; }
+bool nickelstub_airplaneMode() { return workflowManager->airplaneMode; }
