@@ -38,8 +38,21 @@ struct SimOptions {
     int pullMs = 1000;
     int syncMs = 3000;
     QStringList barIcons; // other mods with an icon in the reading menu bar
+    bool suspendRetry = true; // PowerManager tries to suspend again after a veto
 };
 extern SimOptions simOptions;
+
+// SimStats counts what the stand-ins saw, for the checks of the auto-sync
+// scenarios.
+struct SimStats {
+    int pulls = 0;     // KepubBookReaderBase::onResume
+    int pushes = 0;    // ReadingView::sendBookmark
+    int syncs = 0;     // N3SyncManager::silentSync
+    int toasts = 0;    // MainWindowController::toast
+    int vetoes = 0;    // suspend attempts that a ScopedSuspendDisable vetoed
+    bool suspended = false;
+};
+extern SimStats simStats;
 
 // nickelstub_resolve returns the stand-in for a mangled Nickel symbol, or null.
 void *nickelstub_resolve(const char *name);
@@ -47,6 +60,8 @@ void *nickelstub_resolve(const char *name);
 // first call.
 QWidget *nickelstub_mainWindow();
 class ReadingView *nickelstub_readingView();
+class N3PowerWorkflowManager *nickelstub_power();
+bool nickelstub_airplaneMode();
 
 // ---- sync and Wi-Fi ----------------------------------------------------
 
@@ -76,6 +91,38 @@ class WirelessWorkflowManager : public QObject {
 public:
     void connectWirelessSilently();
     bool airplaneMode = true;
+};
+
+// ---- sleep ---------------------------------------------------------------
+
+// N3PowerWorkflowManager::sleep() does what Nickel's handleSleep() does:
+// it emits aboutToSleep(), shows the sleep screen, and asks PowerManager to
+// suspend 1 s later.
+class N3PowerWorkflowManager : public QObject {
+    Q_OBJECT
+public:
+    void sleep();
+    bool sleeping = false;
+Q_SIGNALS:
+    void aboutToSleep();
+};
+
+// PowerManager::suspend() suspends unless a ScopedSuspendDisable exists. After
+// a veto it tries again each second if simOptions.suspendRetry is true.
+// Whether Nickel tries again is not known.
+class PowerManager : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    void suspend();
+};
+
+// ScopedSuspendDisable vetoes each suspend while it exists, as in Nickel.
+class ScopedSuspendDisable : public QObject {
+    Q_OBJECT
+public:
+    ScopedSuspendDisable();
+    ~ScopedSuspendDisable();
+    static int count;
 };
 
 // ---- main window and toasts --------------------------------------------
@@ -129,6 +176,8 @@ public:
 Q_SIGNALS:
     void saveBookmark();
     void sendBookmark(Volume volume);
+    void readerDoneLoading();
+    void readerWillClose();
 protected:
     void paintEvent(QPaintEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;

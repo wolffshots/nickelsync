@@ -14,16 +14,19 @@
 // NickelSync stops after the position sync. If it gets no position from the
 // server, or no book is open, it runs the full sync.
 //
+// autosync.cc can also start a sync when a book loads or the device goes to
+// sleep. See the comment at the top of that file.
+//
 // The icon: an application event filter waits for the show event of the
 // ReadingMenuView. Then it puts a TouchLabel into the bottomHorizontalLayout
 // bar, before the settingsIcon, as NickelHardcover does. On 4.46 that bar is
 // the top bar of the reading menu, and settingsIcon is the overflow icon. A
 // tap opens the NickelSync page, a full-screen N3Dialog.
 //
-// Boot safety: the mod hooks no Nickel function. Until a reading menu shows,
-// it only watches the trigger file and checks the type of each Qt event in the
-// event filter. So a fault in this mod cannot run at boot after the NickelHook
-// failsafe window, and cannot cause a boot loop.
+// Boot safety: the mod hooks no Nickel function. Until a book or a reading
+// menu shows, it only watches the trigger file and checks the type of each Qt
+// event in the event filters. So a fault in this mod cannot run at boot after
+// the NickelHook failsafe window, and cannot cause a boot loop.
 
 #include <QApplication>
 #include <QDir>
@@ -43,6 +46,7 @@
 
 #include "nickelsync.h"
 #include "settings.h"
+#include "autosync.h"
 
 #define NS_DIR       "/mnt/onboard/.adds/nickelsync"
 #define NS_CONFIG    NS_DIR "/config.ini"
@@ -162,16 +166,18 @@ bool NickelSync::wire() {
     return true;
 }
 
-void NickelSync::trigger(Mode mode) {
+void NickelSync::trigger(Mode mode, Origin from) {
     // inotify can deliver one write as several events.
     if (lastTrigger.isValid() && lastTrigger.elapsed() < 1000)
         return;
     lastTrigger.start();
 
     if (state != Idle) {
-        toast("Sync already running");
+        if (from == Manual)
+            toast("Sync already running");
         return;
     }
+    origin = from;
 
     QFile::remove(NS_LOG);
     log("TRIGGER");
@@ -195,10 +201,19 @@ void NickelSync::trigger(Mode mode) {
     downloadStarted = false;
     position.clear();
     baseline = lastSyncTime();
-    log(QString("CONFIG: ConnectTimeout=%1 RestoreWifi=%2 QuickSync=%3 wifi_off=%4 last_sync=%5")
-            .arg(connectTimeout).arg(restoreWifi).arg(quickSync).arg(airplane).arg(baseline.toString(Qt::ISODate)));
+    log(QString("CONFIG: ConnectTimeout=%1 RestoreWifi=%2 QuickSync=%3 wifi_off=%4 last_sync=%5 origin=%6")
+            .arg(connectTimeout).arg(restoreWifi).arg(quickSync).arg(airplane).arg(baseline.toString(Qt::ISODate)).arg(int(origin)));
 
-    if (WirelessManager__connected(WirelessManager__sharedInstance())) {
+    bool connected = WirelessManager__connected(WirelessManager__sharedInstance());
+    // With Wi-Fi on, Nickel itself gets the position when a book loads.
+    if (origin == AutoOpen && connected) {
+        log("SKIP: Wi-Fi is on, so Nickel gets the reading position");
+        return;
+    }
+    // The sleep screen hides the book soon, so find the book now.
+    if (origin == AutoSleep)
+        openBook();
+    if (connected) {
         startPull();
         return;
     }
@@ -240,6 +255,19 @@ QObject *NickelSync::openBook() {
 // give the server the Kobo position with a new time, so the server would never
 // be newer and Nickel would never show the prompt.
 void NickelSync::startPull() {
+    // On sleep the user leaves the book, so send the position as Nickel does
+    // when the user closes a book. No one can answer a prompt, so do not pull.
+    if (origin == AutoSleep) {
+        if (view)
+            push();
+        if (view && quickSync) {
+            state = Checking; // so that finish() waits for the upload
+            finish(position);
+        } else {
+            startSync();
+        }
+        return;
+    }
     QObject *reader = openBook();
     if (!reader) {
         startSync();
@@ -387,6 +415,7 @@ void NickelSync::onTimeout() {
     case Uploading:
         state = Idle;
         restoreAirplaneMode();
+        Q_EMIT ended();
         break;
     case Requested:
         // The syncStarted signal can be missing on some firmware.
@@ -409,20 +438,24 @@ void NickelSync::onTimeout() {
 void NickelSync::finish(QString const &result, QString const &detail) {
     log("RESULT: " + result);
     lastResult = detail.isEmpty() ? result : result + ", " + detail;
+    if (origin != Manual)
+        lastResult = (origin == AutoOpen ? "Auto-sync on open: " : "Auto-sync on sleep: ") + lastResult;
     toast(result, detail);
     timeout.stop();
     settle.stop();
     view.clear();
     // Only a quick sync finishes in the Checking state. Nickel can still be
-    // uploading the position, so wait before Wi-Fi goes off.
-    if (state == Checking && restoreAirplane) {
-        log("UPLOADING: waiting before Wi-Fi goes off");
+    // uploading the position, so wait before Wi-Fi goes off, or before the
+    // device can sleep.
+    if (state == Checking && (restoreAirplane || origin == AutoSleep)) {
+        log("UPLOADING: waiting for the upload");
         state = Uploading;
         timeout.start(UPLOAD_WAIT_MS);
         return;
     }
     state = Idle;
     restoreAirplaneMode();
+    Q_EMIT ended();
 }
 
 // restoreAirplaneMode turns Wi-Fi off again if it was off before the sync.
@@ -437,7 +470,8 @@ void NickelSync::restoreAirplaneMode() {
 
 void NickelSync::toast(QString const &main, QString const &sub) {
     MainWindowController *mwc = MainWindowController__sharedInstance();
-    if (!mwc)
+    // A toast blocks taps on the book, so an automatic sync shows none.
+    if (!mwc || origin != Manual)
         return;
     // Nickel shows one toast at a time. If a toast is on the screen, Nickel
     // shows this one later. eventFilter moves it when it shows.
@@ -627,6 +661,7 @@ static int nickelsync_init() {
         app->installEventFilter(controller);
     else
         nh_log("NickelSync: ERROR: no application, no icon");
+    new AutoSync(controller);
     return 0;
 }
 
@@ -674,6 +709,10 @@ static struct nh_dlsym NickelSyncDlsym[] = {
     { .name = "_ZN15N3DialogFactory9getDialogEP7QWidgetb",                   .out = nh_symoutptr(N3DialogFactory__getDialog),               .desc = "reading menu icon", .optional = true },
     { .name = "_ZN8N3Dialog8setTitleERK7QString",                            .out = nh_symoutptr(N3Dialog__setTitle),                       .desc = "reading menu icon", .optional = true },
     { .name = "_ZN20MainWindowController8pushViewEP7QWidget",                .out = nh_symoutptr(MainWindowController__pushView),           .desc = "reading menu icon", .optional = true },
+    { .name = "_ZN22N3PowerWorkflowManager14sharedInstanceEv",              .out = nh_symoutptr(N3PowerWorkflowManager__sharedInstance),   .desc = "auto-sync on sleep", .optional = true },
+    { .name = "_ZNK22N3PowerWorkflowManager8sleepingEv",                     .out = nh_symoutptr(N3PowerWorkflowManager__sleeping),         .desc = "auto-sync on sleep", .optional = true },
+    { .name = "_ZN20ScopedSuspendDisableC1Ev",                               .out = nh_symoutptr(ScopedSuspendDisable__constructor),        .desc = "auto-sync on sleep", .optional = true },
+    { .name = "_ZN12PowerManager14sharedInstanceEv",                         .out = nh_symoutptr(PowerManager__sharedInstance),             .desc = "auto-sync on sleep", .optional = true },
     {0},
 };
 // clang-format on

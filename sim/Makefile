@@ -16,8 +16,8 @@ CXXFLAGS  := -std=gnu++11 -fPIC -g $(QT_CFLAGS) -Wall -Wextra -Wno-deprecated-de
 vpath %.cc ../src .
 vpath %.h  ../src .
 
-SRCS   := nickelsync.cc settings.cc nickelstub.cc nh_sim.cc main.cc
-MOCS   := nickelsync.h settings.h nickelstub.h
+SRCS   := nickelsync.cc settings.cc autosync.cc nickelstub.cc nh_sim.cc main.cc
+MOCS   := nickelsync.h settings.h autosync.h nickelstub.h
 OBJS   := $(addprefix $(BUILD)/,$(SRCS:.cc=.o)) $(addprefix $(BUILD)/moc_,$(MOCS:.h=.o)) $(BUILD)/qrc_sim.o
 TARGET := nickelsync-sim
 

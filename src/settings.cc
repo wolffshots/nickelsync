@@ -72,9 +72,11 @@ struct Setting {
 // To add a setting, add one line. The order is the order in a new file and on the page.
 // clang-format off
 Setting const settings[] = {
-    {"ConnectTimeout", Int,  "60",    10, 180, "30,60,90,120,180", " s",    "Wi-Fi timeout",        "Seconds to wait for a Wi-Fi connection (10 to 180)."},
-    {"RestoreWifi",    Bool, "true",  0,  0,   nullptr,            nullptr, "Turn Wi-Fi off again", "If Wi-Fi was off before the sync, turn it off again after the sync."},
-    {"QuickSync",      Bool, "false", 0,  0,   nullptr,            nullptr, "Quick sync",           "Inside a book, sync only the reading position and skip the full sync."},
+    {"ConnectTimeout",  Int,  "60",    10, 180, "30,60,90,120,180", " s",    "Wi-Fi timeout",        "Seconds to wait for a Wi-Fi connection (10 to 180)."},
+    {"RestoreWifi",     Bool, "true",  0,  0,   nullptr,            nullptr, "Turn Wi-Fi off again", "If Wi-Fi was off before the sync, turn it off again after the sync."},
+    {"QuickSync",       Bool, "false", 0,  0,   nullptr,            nullptr, "Quick sync",           "Inside a book, sync only the reading position and skip the full sync."},
+    {"AutoSyncOnOpen",  Bool, "false", 0,  0,   nullptr,            nullptr, "Sync on book open",    "Sync the reading position when a book loads."},
+    {"AutoSyncOnSleep", Bool, "false", 0,  0,   nullptr,            nullptr, "Sync on sleep",        "Sync when the device goes to sleep."},
 };
 // clang-format on
 
