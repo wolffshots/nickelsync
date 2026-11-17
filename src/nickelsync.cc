@@ -698,8 +698,10 @@ void openSubPage(QWidget *sub) {
 // the reading view. A rule of the Nickel style sheet then paints that widget
 // and its children white on black:
 //   *[darkMode=true], *[darkMode=true] * { color: white; background-color: black; }
-// Nickel has no such rule for its own N3Dialog pages, so the page needs two
-// more changes. Bordered buttons get a white border. The icons of the title
+// Nickel has no such rule for its own N3Dialog pages, so the page needs more
+// changes. Nickel fills a primary button in code, not in the style sheet, and
+// its text is hard to see on black. So primary buttons become bordered
+// buttons, and bordered buttons get a white border. The icons of the title
 // bar (back and close) get inverted pixmaps.
 void followDarkMode(QWidget *page, QWidget *content) {
     if (!MainWindowController__viewWithObjectName)
@@ -717,13 +719,21 @@ void followDarkMode(QWidget *page, QWidget *content) {
     if (!dark)
         return;
     page->setProperty("darkMode", true);
+    // Hardcover::button() does the same for the buttons that it adds later.
+    for (QLabel *b : content->findChildren<QLabel *>())
+        if (b->property("primaryButton").toBool()) {
+            b->setProperty("primaryButton", false);
+            b->setProperty("borderedButton", true);
+        }
     // setStyleSheet also polishes the page and its children again, so that
     // the new property applies to the widgets that the style has polished.
     page->setStyleSheet(QStringLiteral("N3ButtonLabel[borderedButton=true] { border-color: white; }"));
     for (QLabel *l : page->findChildren<QLabel *>()) {
         if (content->isAncestorOf(l) || !l->pixmap() || l->pixmap()->isNull())
             continue;
-        QImage icon = l->pixmap()->toImage();
+        // Qt 5.2 inverts a premultiplied image without a conversion, which
+        // makes the transparent pixels white. So convert it first.
+        QImage icon = l->pixmap()->toImage().convertToFormat(QImage::Format_ARGB32);
         icon.invertPixels();
         l->setPixmap(QPixmap::fromImage(icon));
     }

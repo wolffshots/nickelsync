@@ -49,6 +49,11 @@ QLabel *Hardcover::label(QLayout *layout, char const *name, QString const &text)
 QLabel *Hardcover::button(QLayout *layout, QString const &text, char const *action, bool primary) {
     QLabel *b = reinterpret_cast<QLabel *>(calloc(1, 512));
     N3ButtonLabel__constructor(b, layout->parentWidget());
+    // On a dark page (followDarkMode), a primary button is hard to see, so it
+    // is a bordered button.
+    for (QWidget *w = layout->parentWidget(); primary && w; w = w->parentWidget())
+        if (w->property("darkMode").toBool())
+            primary = false;
     // Without a style property, Nickel draws the button as italic text.
     b->setProperty(primary ? "primaryButton" : "borderedButton", true);
     b->setProperty("hcAction", QByteArray(action));

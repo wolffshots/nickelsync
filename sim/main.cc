@@ -459,12 +459,15 @@ static void runStep(QStringList const &steps, int i) {
         return runStep(steps, i + 1);
     }
     if (s == QLatin1String("dark")) {
-        // The page background, the text of a bordered button and its border
-        // must be light on black.
+        // The page background must be black. A bordered button must have
+        // white text and a white border. No primary button may show: its
+        // text is hard to see on black on the device.
         N3Dialog *d = topDialog();
         QImage img = d ? d->grab().toImage() : QImage();
         bool ok = !img.isNull() && qGray(img.pixel(img.width() / 2, img.height() - 5)) < 64;
         for (N3ButtonLabel *b : d ? d->findChildren<N3ButtonLabel *>() : QList<N3ButtonLabel *>()) {
+            if (ok && b->isVisible() && b->property("primaryButton").toBool())
+                ok = false;
             if (!ok || !b->isVisible() || b->property("borderedButton") != QVariant(true))
                 continue;
             QPoint edge = b->mapTo(d, QPoint(b->width() / 2, 0));
