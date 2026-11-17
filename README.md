@@ -37,6 +37,8 @@ In a book, tap the center of the page to open the reading menu. Tap the sync ico
 | Sync now | Syncs the reading position, then runs the full sync. The `QuickSync` setting does not apply. |
 | Sync reading position | Syncs only the reading position, as with `QuickSync=true`. See [Quick sync](#quick-sync). |
 
+The **Settings** button opens the settings page. See [Configuration](#configuration).
+
 With NickelMenu, you can also tap **Sync now** in the NickelMenu menu of a book or of the home screen. This item uses the `QuickSync` setting.
 
 NickelSync shows a short message for each step. The messages show at the top of the screen, so they do not cover a Nickel prompt in the center:
@@ -91,6 +93,16 @@ Limits:
 
 The configuration file is `KOBOeReader/.adds/nickelsync/config.ini`. The file is optional. NickelSync reads it each time you tap **Sync now**, so a change has effect without a reboot.
 
+To change a setting on the device, tap **Settings** on the NickelSync page. Each setting has a button that shows its value. Tap the button to go to the next value. NickelSync writes the file at once. The page changes only the value of the setting. It keeps comments, unknown keys and other sections. If the file is missing, the page writes a new file with the comments below.
+
+The page cannot read a file with one of these faults:
+
+- A line is not blank, not a comment (`;` or `#`), not a section (`[name]`) and not a key (`key=value`).
+- The file has a NUL byte.
+- The file is larger than 256 KiB.
+
+The page then shows the default values. The next change renames the file to `config.ini.corrupt` and writes a new `config.ini`. The sync also uses the default values for such a file. A value that is not valid, for example `QuickSync=maybe`, gives the default value of that setting. A number outside its range changes to the nearest limit.
+
 In kpm, open NickelSync and tap **Settings** to create and edit the file.
 
 ```ini
@@ -122,7 +134,7 @@ Without kpm:
 1. Delete `KOBOeReader/.adds/nickelsync/uninstall`.
 2. Reboot the device.
 
-NickelHook then removes the mod. The mod also removes its NickelMenu file, its configuration and its log.
+NickelHook then removes the mod. The mod also removes its NickelMenu file, its configuration, `config.ini.corrupt` and its log.
 
 ## How it works
 
