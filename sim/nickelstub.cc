@@ -421,29 +421,42 @@ N3ButtonLabel::N3ButtonLabel(QWidget *parent) : TouchLabel(parent) {
 
 N3Dialog::N3Dialog(QWidget *content) : QFrame(nullptr) {
     setObjectName(QStringLiteral("N3Dialog"));
-    QVBoxLayout *l = new QVBoxLayout(this);
+    QVBoxLayout *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    // As in Ui_N3Dialog: the frame mainFrame has its own style sheet with a
+    // white background, and the title row is a layout in it, not a widget.
+    // The icons sit at the top of cells that are higher than the icons, so
+    // the frame shows below them.
+    QFrame *frame = new QFrame(this);
+    frame->setObjectName(QStringLiteral("mainFrame"));
+    frame->setStyleSheet(QStringLiteral("#mainFrame { background-color: white; }"));
+    outer->addWidget(frame);
+    QVBoxLayout *l = new QVBoxLayout(frame);
     l->setContentsMargins(0, 0, 0, 0);
     l->setSpacing(0);
-    QFrame *bar = new QFrame(this);
-    bar->setObjectName(QStringLiteral("n3TitleBar"));
-    QHBoxLayout *bl = new QHBoxLayout(bar);
+    QHBoxLayout *bl = new QHBoxLayout();
     bl->setContentsMargins(24, 10, 12, 10);
-    TouchLabel *backButton = new TouchLabel(bar);
+    TouchLabel *backButton = new TouchLabel(frame);
     backButton->setObjectName(QStringLiteral("n3Back"));
     backButton->setPixmap(icon(QStringLiteral("<"), BAR_ICON));
     backButton->hide();
     back = backButton;
-    title = new QLabel(bar);
+    title = new QLabel(frame);
     title->setFont(uiFont(24, true));
-    TouchLabel *close = new TouchLabel(bar);
+    TouchLabel *close = new TouchLabel(frame);
     close->setObjectName(QStringLiteral("n3Close"));
     close->setPixmap(icon(QStringLiteral("✕"), BAR_ICON));
-    bl->addWidget(backButton);
-    bl->addWidget(title, 1);
-    bl->addWidget(close);
-    l->addWidget(bar);
+    for (QLabel *icon : {static_cast<QLabel *>(backButton), static_cast<QLabel *>(close)}) {
+        QVBoxLayout *cell = new QVBoxLayout();
+        cell->addWidget(icon);
+        cell->addSpacing(BAR_ICON / 2);
+        bl->addLayout(cell);
+        if (icon == backButton)
+            bl->addWidget(title, 1);
+    }
+    l->addLayout(bl);
     if (content) {
-        content->setParent(this);
+        content->setParent(frame);
         l->addWidget(content, 1);
     }
     connect(close, &TouchLabel::tapped, this, &N3Dialog::closeTapped);
@@ -582,7 +595,7 @@ QWidget *nickelstub_mainWindow() {
         // and its children white on black.
         qApp->setStyleSheet(QStringLiteral(
             "*[darkMode=true], *[darkMode=true] * { color: white; background-color: black; }"
-            "N3Dialog { background: white; } #n3TitleBar { border-bottom: 2px solid black; }"
+            "N3Dialog { background: white; }"
             "N3ButtonLabel { border: none; font-style: italic; padding: 12px 0px; }"
             "N3ButtonLabel[borderedButton=\"true\"] { border: 2px solid black; border-radius: 6px;"
             " padding: 12px 28px; font-style: normal; }"

@@ -725,6 +725,11 @@ void followDarkMode(QWidget *page, QWidget *content) {
             b->setProperty("primaryButton", false);
             b->setProperty("borderedButton", true);
         }
+    // Ui_N3Dialog gives the frame mainFrame its own style sheet with a white
+    // background. That sheet wins over the page sheet, and the frame shows in
+    // the gaps of the title row, for example below the back and close icons.
+    if (QWidget *frame = page->findChild<QWidget *>(QStringLiteral("mainFrame")))
+        frame->setStyleSheet(frame->styleSheet() + QStringLiteral("\n#mainFrame { background-color: black; }"));
     // setStyleSheet also polishes the page and its children again, so that
     // the new property applies to the widgets that the style has polished.
     page->setStyleSheet(QStringLiteral("N3ButtonLabel[borderedButton=true] { border-color: white; }"));

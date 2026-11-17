@@ -465,6 +465,12 @@ static void runStep(QStringList const &steps, int i) {
         N3Dialog *d = topDialog();
         QImage img = d ? d->grab().toImage() : QImage();
         bool ok = !img.isNull() && qGray(img.pixel(img.width() / 2, img.height() - 5)) < 64;
+        // The frame of the dialog shows in the gaps of the title row, for
+        // example below the close icon.
+        if (QLabel *close = d ? d->findChild<QLabel *>(QStringLiteral("n3Close")) : nullptr) {
+            QPoint below = close->mapTo(d, QPoint(close->width() / 2, close->height() + 4));
+            ok = ok && qGray(img.pixel(below)) < 64;
+        }
         for (N3ButtonLabel *b : d ? d->findChildren<N3ButtonLabel *>() : QList<N3ButtonLabel *>()) {
             if (ok && b->isVisible() && b->property("primaryButton").toBool())
                 ok = false;
