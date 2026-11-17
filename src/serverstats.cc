@@ -219,4 +219,9 @@ void ServerStats::addRow(QString const &key, QString const &value) {
     v->setWordWrap(true);
     rows->addWidget(k);
     rows->addWidget(v);
+    // A layout shows a new child of a visible widget only in the next event
+    // loop pass, which is a second paint and so a second e-ink update. Show
+    // the rows now, in the same paint as the hide of the message.
+    k->show();
+    v->show();
 }

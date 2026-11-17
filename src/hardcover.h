@@ -43,6 +43,7 @@ public:
 private Q_SLOTS:
     void onButton();
     void onPoll();
+    void load();
 
 private:
     enum Auth { SignedOut, SigningIn, SignedIn };
@@ -84,7 +85,6 @@ private:
     void startSignIn();
     void cancelSignIn();
     void signOut();
-    void load();
     void loadStatus(int bookId);
     void loadJournal();
     void search();

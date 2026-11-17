@@ -106,9 +106,9 @@ if [ "${1:-}" = "--all" ]; then
     run hc-off              --wifi on --steps "absent:Hardcover"
     run hc-signin           --wifi on --hardcover signed-out \
                             --steps "Hardcover;Sign in to Hardcover;expect:NKSY-2026;wait:3000;expect:Load from Hardcover"
-    run hc-status           --wifi on --hardcover signed-in --isbn 9780000000001 \
+    run hc-status           --wifi on --hardcover signed-in --isbn 9780000000001 --flush-log \
                             --steps "Hardcover;Load from Hardcover;expect:Currently Reading, 42%, page 160;Reading journal;expect:The light does not ask;Older;expect:Want to Read;back;expect:Currently Reading, 42%;back;expect:Sync now;Hardcover;close;closed"
-    run hc-link             --wifi on --hardcover signed-in \
+    run hc-link             --wifi on --hardcover signed-in --flush-log \
                             --steps "Hardcover;Load from Hardcover;expect:not on Hardcover;Link book;More results;Previous;The Lighthouse Keeper's Daughter;expect:Want to Read;Unlink book;expect:Load from Hardcover"
     run hc-empty            --wifi on --hardcover signed-in --isbn 9780000000002 \
                             --steps "Hardcover;Load from Hardcover;expect:Not in your Hardcover library;Reading journal;expect:No journal entries"
@@ -117,6 +117,9 @@ if [ "${1:-}" = "--all" ]; then
     # --stats store: the server stats do not connect Wi-Fi when the page opens.
     run hc-wifi-off         --hardcover signed-in --isbn 9780000000001 --stats store \
                             --steps "Hardcover;Load from Hardcover;expect:Connect to Wi-Fi first."
+    # Each page change is one large paint pass, and a value tap is a small one.
+    run pages-flush         --wifi on --hardcover signed-in --stats store --flush-log \
+                            --steps "Settings;60 s;90 s;back;Hardcover;back;Hardcover;close;closed"
     run hc-signout          --wifi on --hardcover signed-in --steps "Hardcover;Sign out;expect:Sign in to Hardcover"
     exit $rc
 fi

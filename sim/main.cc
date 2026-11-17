@@ -49,6 +49,8 @@
 //                       token that the mock rejects, so NickelSync refreshes it.
 //                       The mock server hcmock.py must run (run.sh starts it).
 //   --isbn ISBN         the ISBN of the open book in the sim KoboReader.sqlite
+//   --flush-log         log each paint pass of the Kobo window. With --steps,
+//                       check the paint passes of each step (exit code 18).
 //   --steps "A;B;..."   for --screenshot: after the NickelSync page opens, run
 //                       these steps instead of a sync. A step is the text of a
 //                       button or of a search result to tap, "wait:MS", or
@@ -65,7 +67,8 @@
 // after the page closed, 12 a step target was not found, 13 an expect or
 // absent check failed, 14 a visible button has no button style, 15 the close
 // button left a NickelSync page open, 16 the Hardcover button does not match
-// the Hardcover setting, 17 the back button did not close its page.
+// the Hardcover setting, 17 the back button did not close its page, 18 with
+// --flush-log, a step made more than one large paint pass or a repeated pass.
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
@@ -74,6 +77,7 @@
 #include <QLabel>
 #include <QMap>
 #include <QMenu>
+#include <QPaintEvent>
 #include <QPainter>
 #include <QPointer>
 #include <QSettings>
@@ -93,6 +97,7 @@ extern struct nh NickelHook;
 
 static QString shotDir;
 static int shotIndex;
+static bool grabbing = false; // shot() renders the window, which is not a screen update
 static int exitCode = 0;
 
 // composite grabs the screen window with any top-level window on top, for
@@ -107,11 +112,65 @@ static QPixmap composite() {
     return pm;
 }
 
+// FlushLog counts the paint passes of the Kobo window. Qt paints the widgets
+// of one pass together and then flushes them to the screen. On the device,
+// each flush is one e-ink update, so a pass that covers most of the screen is
+// a flash. It logs one line for each pass: its bounding box and the share of
+// the screen.
+//
+// For --steps, it also checks each step: at most one pass that covers more
+// than half of the screen (a page change), and no pass that repeats the one
+// before it (a widget that a layout showed one event loop pass late).
+class FlushLog : public QObject {
+public:
+    int passes = 0;
+    int stepLarge = 0;    // passes of this step that cover more than half of the screen
+    bool repeat = false;  // a pass of this step repeated the one before it
+    void resetStep() {
+        stepLarge = 0;
+        repeat = false;
+        last = QRect();
+    }
+    bool eventFilter(QObject *obj, QEvent *event) override {
+        if (event->type() != QEvent::Paint || grabbing || !obj->isWidgetType())
+            return false;
+        QWidget *w = static_cast<QWidget *>(obj);
+        QWidget *win = nickelstub_mainWindow();
+        if (w->window() != win)
+            return false;
+        QRect r = static_cast<QPaintEvent *>(event)->rect().translated(w->mapTo(win, QPoint(0, 0)));
+        if (pending.isEmpty())
+            QTimer::singleShot(0, [this] { endPass(); });
+        pending = pending.united(r);
+        return false;
+    }
+
+private:
+    QRect pending;
+    QRect last;
+    void endPass() {
+        QWidget *win = nickelstub_mainWindow();
+        int share = 100 * pending.width() * pending.height() / qMax(1, win->width() * win->height());
+        passes++;
+        if (share > 50)
+            stepLarge++;
+        if (pending == last)
+            repeat = true;
+        last = pending;
+        std::fprintf(stderr, "sim: paint pass %d: %dx%d at %d,%d, %d%% of the screen\n", passes, pending.width(),
+                     pending.height(), pending.x(), pending.y(), share);
+        pending = QRect();
+    }
+};
+static FlushLog *flushLog = nullptr;
+
 static void shot(QString const &name) {
     QString slug = name.toLower();
     slug.replace(QRegExp(QStringLiteral("[^a-z0-9]+")), QStringLiteral("-"));
     QString path = QStringLiteral("%1/%2-%3.png").arg(shotDir).arg(++shotIndex, 2, 10, QLatin1Char('0')).arg(slug);
+    grabbing = true;
     composite().save(path);
+    grabbing = false;
     std::fprintf(stderr, "sim: wrote %s\n", qPrintable(path));
 }
 
@@ -393,9 +452,12 @@ static void runStep(QStringList const &steps, int i) {
     }
     int wait = 1500;
     QPointer<N3Dialog> backFrom;
+    if (flushLog)
+        flushLog->resetStep();
     if (s.startsWith(QLatin1String("wait:"))) {
         wait = s.mid(5).toInt();
     } else if (s == QLatin1String("back") || s == QLatin1String("close")) {
+        std::fprintf(stderr, "sim: tap %s\n", qPrintable(s));
         N3Dialog *d = topDialog();
         if (!d || (s == QLatin1String("back") && !d->back->isVisible())) {
             std::fprintf(stderr, "sim: step %s\n", qPrintable(s));
@@ -411,12 +473,15 @@ static void runStep(QStringList const &steps, int i) {
             std::fprintf(stderr, "sim: step %s\n", qPrintable(s));
             return fail(12, "step target not found");
         }
+        std::fprintf(stderr, "sim: tap %s\n", qPrintable(s));
         QMetaObject::invokeMethod(t, "tapped", Q_ARG(bool, false));
     }
     QTimer::singleShot(wait, [steps, i, s, backFrom] {
         shot(s.startsWith(QLatin1String("wait:")) ? QStringLiteral("wait") : QStringLiteral("tap ") + s);
         if (backFrom)
             return fail(17, "the back button did not close its page");
+        if (flushLog && (flushLog->stepLarge > 1 || flushLog->repeat))
+            return fail(18, "a step painted the screen more than once");
         if (!stylesOk())
             return fail(14, "a visible button has no button style");
         runStep(steps, i + 1);
@@ -518,6 +583,9 @@ int main(int argc, char **argv) {
         } else if (a == "--expect-stats") {
             expectStats = v;
             i++;
+        } else if (a == "--flush-log") {
+            flushLog = new FlushLog();
+            app.installEventFilter(flushLog);
         } else if (a == "--quick") {
             quick = true;
         } else if (a == "--screenshot") {

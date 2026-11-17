@@ -524,7 +524,10 @@ void Hardcover::loadJournal() {
     vars.insert(QStringLiteral("offset"), journalOffset);
     journalLoading = true;
     journalError.clear();
-    rebuildJournal();
+    // When entries show, keep them until the next page arrives. A "Loading"
+    // page between them is one more e-ink update.
+    if (journal.isEmpty())
+        rebuildJournal();
     graphql(JOURNAL_QUERY, vars, [this](QJsonObject const &data, QString const &error) {
         journalLoading = false;
         journalError = error;
@@ -553,7 +556,10 @@ void Hardcover::search() {
     vars.insert(QStringLiteral("page"), searchPageNo);
     searchLoading = true;
     searchError.clear();
-    rebuildSearch();
+    // When results show, keep them until the next page arrives, as for the
+    // journal.
+    if (results.isEmpty())
+        rebuildSearch();
     graphql(SEARCH_QUERY, vars, [this](QJsonObject const &data, QString const &error) {
         searchLoading = false;
         searchError = error;
@@ -572,9 +578,14 @@ void Hardcover::link(int id) {
     store.setValue(linkKey(), id);
     store.sync();
     hcLog(QStringLiteral("LINK: book %1").arg(id));
-    if (searchView)
+    // Load when the search page is gone. A load before that paints the
+    // Hardcover page below the search page: one more e-ink update.
+    if (searchView) {
+        connect(searchView, SIGNAL(destroyed()), this, SLOT(load()), Qt::QueuedConnection);
         searchView->deleteLater();
-    load();
+    } else {
+        load();
+    }
 }
 
 void Hardcover::unlink() {

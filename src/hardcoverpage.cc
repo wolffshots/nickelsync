@@ -68,7 +68,11 @@ static QHBoxLayout *row(QVBoxLayout *parent, int spacing) {
 }
 
 // freshBody replaces the body widget of a container with an empty one. The
-// old body can hold the button that was tapped, so delete it later.
+// old body can hold the button that was tapped, so delete it later. The new
+// body stays hidden while the caller fills it, and ShowAtEnd shows it. So the
+// hide of the old body and the new body show in one paint, which is one e-ink
+// update. A child that a layout adds to a visible widget shows only in the
+// next event loop pass, which is a second paint.
 QVBoxLayout *Hardcover::freshBody(QWidget *container, QPointer<QWidget> &body) {
     if (body) {
         body->hide();
@@ -78,9 +82,21 @@ QVBoxLayout *Hardcover::freshBody(QWidget *container, QPointer<QWidget> &body) {
     QVBoxLayout *l = new QVBoxLayout(body);
     l->setContentsMargins(0, 0, 0, 0);
     l->setSpacing(px(12));
+    body->hide();
     static_cast<QVBoxLayout *>(container->layout())->insertWidget(0, body);
     return l;
 }
+
+namespace {
+// ShowAtEnd shows a body that freshBody made when a rebuild function returns.
+struct ShowAtEnd {
+    QPointer<QWidget> &body;
+    ~ShowAtEnd() {
+        if (body)
+            body->show();
+    }
+};
+} // namespace
 
 // addButton also gets the open book. The NickelSync page hides the book, so
 // the Hardcover page cannot get it later.
@@ -104,6 +120,7 @@ void Hardcover::showPage() {
     mainView = newPage(QStringLiteral("Hardcover"), content);
     mainContent = content;
     rebuild();
+    openSubPage(mainView);
 }
 
 // rebuild builds the Hardcover page again from the state.
@@ -111,6 +128,7 @@ void Hardcover::rebuild() {
     if (!mainContent)
         return;
     QVBoxLayout *l = freshBody(mainContent, mainBody);
+    ShowAtEnd show{mainBody};
 
     if (auth == SignedOut) {
         label(l, "nsDesc", QStringLiteral("Sign in to show the Hardcover status and reading journal of this book."));
@@ -202,6 +220,10 @@ void Hardcover::onButton() {
         showSearch();
     } else if (a == "unlink") {
         unlink();
+    } else if ((a == "newer" || a == "older") && journalLoading) {
+        // The entries stay on the page while the next page loads.
+    } else if ((a == "previous" || a == "more") && searchLoading) {
+        // The results stay on the page while the next page loads.
     } else if (a == "newer") {
         journalOffset = qMax(0, journalOffset - JOURNAL_PAGE);
         loadJournal();
@@ -221,8 +243,10 @@ void Hardcover::onButton() {
     }
 }
 
-// newPage opens a full-screen page over the current view, as showPage() in
-// nickelsync.cc does. content gets a layout with a stretch at the end.
+// newPage makes a full-screen page, as showPage() in nickelsync.cc does.
+// content gets a layout with a stretch at the end. Fill content, then open the
+// page with openSubPage(), so that the first paint shows the content: each
+// later paint is one more e-ink update.
 QWidget *Hardcover::newPage(QString const &title, QWidget *&content) {
     content = new QWidget();
     content->setStyleSheet(style());
@@ -232,7 +256,6 @@ QWidget *Hardcover::newPage(QString const &title, QWidget *&content) {
     QWidget *page = N3DialogFactory__getDialog(content, true);
     N3Dialog__setTitle(page, title);
     page->setFixedSize(screen);
-    openSubPage(page);
     return page;
 }
 
@@ -307,12 +330,14 @@ void Hardcover::showJournal() {
     journalView = newPage(QStringLiteral("Reading journal"), content);
     journalContent = content;
     loadJournal();
+    openSubPage(journalView);
 }
 
 void Hardcover::rebuildJournal() {
     if (!journalContent)
         return;
     QVBoxLayout *l = freshBody(journalContent, journalBody);
+    ShowAtEnd show{journalBody};
     l->setSpacing(px(8));
     label(l, "nsValue", status.bookTitle);
     l->addSpacing(px(16));
@@ -356,6 +381,7 @@ void Hardcover::showSearch() {
     searchView = newPage(QStringLiteral("Link book"), content);
     searchContent = content;
     search();
+    openSubPage(searchView);
 }
 
 // authorsOf gets the author names of a search result.
@@ -378,6 +404,7 @@ void Hardcover::rebuildSearch() {
     if (!searchContent)
         return;
     QVBoxLayout *l = freshBody(searchContent, searchBody);
+    ShowAtEnd show{searchBody};
     label(l, "nsDesc", QStringLiteral("Tap the Hardcover book for \"%1\".").arg(book.title));
     l->addSpacing(px(16));
     if (searchLoading) {
