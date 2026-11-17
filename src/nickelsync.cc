@@ -24,6 +24,9 @@
 // tap opens the NickelSync page, a full-screen N3Dialog. The page also shows
 // the server stats of the open book (serverstats.cc).
 //
+// With Hardcover=true in the config, the page also has a read-only Hardcover
+// section. It has its own OAuth sign-in. See hardcover.h.
+//
 // Boot safety: the mod hooks no Nickel function. Until a book or a reading
 // menu shows, it only watches the trigger file and checks the type of each Qt
 // event in the event filters. So a fault in this mod cannot run at boot after
@@ -45,6 +48,8 @@
 
 #include <NickelHook.h>
 
+#include "hardcover.h"
+#include "nickel.h"
 #include "nickelsync.h"
 #include "settings.h"
 #include "autosync.h"
@@ -90,34 +95,34 @@ static N3SyncManager *(*N3SyncManager__sharedInstance)();
 static void (*N3SyncManager__silentSync)(N3SyncManager *);
 static bool (*SyncManagerBase__isSyncing)(N3SyncManager const *);
 
-static WirelessManager *(*WirelessManager__sharedInstance)();
-static bool (*WirelessManager__connected)(WirelessManager *);
+WirelessManager *(*WirelessManager__sharedInstance)();
+bool (*WirelessManager__connected)(WirelessManager *);
 
 static WirelessWorkflowManager *(*WirelessWorkflowManager__sharedInstance)();
 static void (*WirelessWorkflowManager__connectWirelessSilently)(WirelessWorkflowManager *);
 static bool (*WirelessWorkflowManager__isAirplaneMode)(WirelessWorkflowManager *);
 static void (*WirelessWorkflowManager__setAirplaneMode)(WirelessWorkflowManager *, bool);
 
-// settings.cc also uses this function and the page functions below, so they
-// are not static.
+// Other source files also use this function and the page functions below
+// (nickel.h), so they are not static.
 MainWindowController *(*MainWindowController__sharedInstance)();
 static void (*MainWindowController__toast)(MainWindowController *, QString const &, QString const &, int);
 
 // Optional. If a firmware lacks them, NickelSync only runs the full sync.
-static QWidget *(*MainWindowController__viewWithObjectName)(MainWindowController const *, QString const &);
-static void const *(*ReadingView__getVolume)(void const *); // returns Volume const&
+QWidget *(*MainWindowController__viewWithObjectName)(MainWindowController const *, QString const &);
+void const *(*ReadingView__getVolume)(void const *); // returns Volume const&
 
 // Optional. If a firmware lacks them, the reading menu has no NickelSync icon.
 // The object sizes are the sizes that NickelHardcover allocates.
-static void (*TouchLabel__constructor)(QLabel *, QWidget *, QFlags<Qt::WindowType>);
+void (*TouchLabel__constructor)(QLabel *, QWidget *, QFlags<Qt::WindowType>);
 static void (*TouchLabel__setHitStateEnabled)(QLabel *, bool);
 void (*N3ButtonLabel__constructor)(QLabel *, QWidget *);
 QWidget *(*N3DialogFactory__getDialog)(QWidget *, bool);
 void (*N3Dialog__setTitle)(QWidget *, QString const &);
 QWidget *(*MainWindowController__pushView)(MainWindowController *, QWidget *);
 
-// Optional. If a firmware lacks it, the page shows no server stats.
-static QString (*Content__getId)(void const *); // the ContentID of a Volume
+// Content__getId (server stats and Hardcover), Content__getTitle and
+// Content__getAttribution are optional. hardcover.cc defines them (nickel.h).
 
 static NickelSync *controller = nullptr;
 
@@ -609,6 +614,8 @@ void NickelSync::showPage() {
     l->addSpacing(px(56));
     ServerStats *stats = new ServerStats(openBookId(), px(12));
     l->addWidget(stats);
+    if (Hardcover::enabled())
+        Hardcover::instance()->addSection(l, screen);
     l->addStretch(1);
 
     page = N3DialogFactory__getDialog(content, true);
@@ -731,6 +738,7 @@ static bool nickelsync_uninstall() {
     nh_delete_file(NS_CONFIG);
     nh_delete_file(NS_CONFIG ".corrupt");
     nh_delete_file(NS_LOG);
+    nh_delete_file(NS_DIR "/hardcover.ini");
     nh_delete_dir(NS_DIR);
     return true;
 }
@@ -774,7 +782,9 @@ static struct nh_dlsym NickelSyncDlsym[] = {
     { .name = "_ZNK22N3PowerWorkflowManager8sleepingEv",                     .out = nh_symoutptr(N3PowerWorkflowManager__sleeping),         .desc = "auto-sync on sleep", .optional = true },
     { .name = "_ZN20ScopedSuspendDisableC1Ev",                               .out = nh_symoutptr(ScopedSuspendDisable__constructor),        .desc = "auto-sync on sleep", .optional = true },
     { .name = "_ZN12PowerManager14sharedInstanceEv",                         .out = nh_symoutptr(PowerManager__sharedInstance),             .desc = "auto-sync on sleep", .optional = true },
-    { .name = "_ZNK7Content5getIdEv",                                        .out = nh_symoutptr(Content__getId),                           .desc = "server stats", .optional = true },
+    { .name = "_ZNK7Content5getIdEv",                                        .out = nh_symoutptr(Content__getId),                           .desc = "server stats, Hardcover section", .optional = true },
+    { .name = "_ZNK7Content8getTitleEv",                                     .out = nh_symoutptr(Content__getTitle),                        .desc = "Hardcover section", .optional = true },
+    { .name = "_ZNK7Content14getAttributionEv",                              .out = nh_symoutptr(Content__getAttribution),                  .desc = "Hardcover section", .optional = true },
     {0},
 };
 // clang-format on

@@ -158,9 +158,33 @@ QuickSync=false
 AutoSyncOnOpen=false
 ; Sync when the device goes to sleep.
 AutoSyncOnSleep=false
+; Show the Hardcover section on the NickelSync page.
+Hardcover=false
 ```
 
 `RestoreWifi` does not turn Wi-Fi off if Nickel starts to download books after the sync.
+
+## Hardcover
+
+Set `Hardcover=true` in the [configuration](#configuration) to show a Hardcover section on the NickelSync page. The section shows [Hardcover](https://hardcover.app) data of the open book. It is read-only. NickelSync does not change data on Hardcover.
+
+NickelSync has its own Hardcover sign-in. It does not use the token of NickelHardcover. To sign in:
+
+1. Connect Wi-Fi.
+2. On the NickelSync page, tap **Sign in to Hardcover**. The page shows a code.
+3. On a phone or a computer, go to `hardcover.app/link` and type the code.
+
+NickelSync asks only for read access: your profile, your library, your reading journal and the book catalog. It keeps the tokens in `KOBOeReader/.adds/nickelsync/hardcover.ini`. **Sign out** revokes the tokens and deletes them from the file.
+
+Tap **Load from Hardcover** to load the data. NickelSync does not load data on its own. If Wi-Fi is off, the section shows "Connect to Wi-Fi first."
+
+| Data | Where |
+|---|---|
+| Status, for example Currently Reading | The section |
+| Progress in percent and pages, start and finish dates | The section |
+| Journal entries: quotes, notes, ratings, reviews, progress and status changes | The **Reading journal** page, 5 entries for each page |
+
+NickelSync finds the book on Hardcover from the ISBN in the Kobo database. If the book has no ISBN, or Hardcover does not know the ISBN, tap **Link book**. The search page shows Hardcover books with the title and author of the open book. Tap a result to link it. NickelSync keeps the link in `hardcover.ini`. **Unlink book** removes the link.
 
 ## Log
 
@@ -179,7 +203,7 @@ Without kpm:
 1. Delete `KOBOeReader/.adds/nickelsync/uninstall`.
 2. Reboot the device.
 
-NickelHook then removes the mod. The mod also removes its NickelMenu file, its configuration, `config.ini.corrupt` and its log.
+NickelHook then removes the mod. The mod also removes its NickelMenu file, its configuration, `config.ini.corrupt`, its log and its Hardcover tokens.
 
 ## How it works
 

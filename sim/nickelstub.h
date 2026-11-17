@@ -44,6 +44,8 @@ struct SimOptions {
     int syncMs = 3000;
     QStringList barIcons; // other mods with an icon in the reading menu bar
     bool suspendRetry = true; // PowerManager tries to suspend again after a veto
+    QString title = QStringLiteral("The Lighthouse Keeper"); // the title of the open book
+    QString author = QStringLiteral("Mara Quill");
 };
 extern SimOptions simOptions;
 

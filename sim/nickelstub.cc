@@ -472,7 +472,10 @@ static QWidget *MainWindowController__viewWithObjectName(QObject const *, QStrin
     return mainWindow ? mainWindow->findChild<QWidget *>(name) : nullptr;
 }
 static void const *ReadingView__getVolume(void const *) { return &volume; }
+// Content is a base class of Volume. The sim has one open book.
 static QString Content__getId(void const *) { return simOptions.bookId; }
+static QString Content__getTitle(void const *) { return simOptions.title; }
+static QString Content__getAttribution(void const *) { return simOptions.author; }
 
 // nickelsync.cc allocates these objects with calloc and calls the Nickel
 // constructor in place. The sizes are the sizes that it allocates.
@@ -541,6 +544,8 @@ static const struct {
     SYM("_ZN20ScopedSuspendDisableC1Ev", ScopedSuspendDisable__constructor),
     SYM("_ZN12PowerManager14sharedInstanceEv", PowerManager__sharedInstance),
     SYM("_ZNK7Content5getIdEv", Content__getId),
+    SYM("_ZNK7Content8getTitleEv", Content__getTitle),
+    SYM("_ZNK7Content14getAttributionEv", Content__getAttribution),
 };
 
 void *nickelstub_resolve(const char *name) {

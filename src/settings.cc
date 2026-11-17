@@ -35,6 +35,7 @@
 
 #include <NickelHook.h>
 
+#include "nickel.h"
 #include "settings.h"
 
 // The same paths as NS_DIR and NS_CONFIG in nickelsync.cc.
@@ -45,14 +46,11 @@
 
 static const int MAX_SIZE = 256 * 1024;
 
-// The Nickel functions that nickelsync.cc resolves. The page needs all of
-// them. If one is missing, nickelsync.cc shows no icon, so no page opens.
-typedef QObject MainWindowController;
-extern MainWindowController *(*MainWindowController__sharedInstance)();
-extern void (*N3ButtonLabel__constructor)(QLabel *, QWidget *);
-extern QWidget *(*N3DialogFactory__getDialog)(QWidget *, bool);
-extern void (*N3Dialog__setTitle)(QWidget *, QString const &);
-extern QWidget *(*MainWindowController__pushView)(MainWindowController *, QWidget *);
+// The page uses the Nickel functions in nickel.h that nickelsync.cc resolves:
+// MainWindowController__sharedInstance, MainWindowController__pushView,
+// N3ButtonLabel__constructor, N3DialogFactory__getDialog and
+// N3Dialog__setTitle. If one is missing, nickelsync.cc shows no icon, so no
+// page opens.
 
 namespace {
 
@@ -77,6 +75,7 @@ Setting const settings[] = {
     {"QuickSync",       Bool, "false", 0,  0,   nullptr,            nullptr, "Quick sync",           "Inside a book, sync only the reading position and skip the full sync."},
     {"AutoSyncOnOpen",  Bool, "false", 0,  0,   nullptr,            nullptr, "Sync on book open",    "Sync the reading position when a book loads."},
     {"AutoSyncOnSleep", Bool, "false", 0,  0,   nullptr,            nullptr, "Sync on sleep",        "Sync when the device goes to sleep."},
+    {"Hardcover",       Bool, "false", 0,  0,   nullptr,            nullptr, "Hardcover section",    "Show the Hardcover section on the NickelSync page."},
 };
 // clang-format on
 

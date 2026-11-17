@@ -29,7 +29,8 @@
 //   --expect-stats S    with --pick none: the server stats state to expect,
 //                       done, error or none (default done)
 //   --config FILE       copy FILE to config.ini before the run. Without it,
-//                       there is no config.ini (unless --quick or --auto).
+//                       there is no config.ini (unless --quick, --auto or
+//                       --hardcover).
 //   --settings K1,K2    for --screenshot: open the settings page, tap the
 //                       button of each key in turn, close the page, open it
 //                       again, then exit. run.sh checks config.ini.
@@ -41,14 +42,27 @@
 //   --no-retry          PowerManager does not try to suspend again after a veto
 //   --expect K=N,...    with --auto: the counts to check at the end. Keys:
 //                       pulls, pushes, syncs, toasts, vetoes, suspended (0 or 1).
+//   --hardcover signed-out|signed-in|stale
+//                       turn on the Hardcover section (Hardcover=true) and set
+//                       the token store: no tokens, valid tokens, or an access
+//                       token that the mock rejects, so NickelSync refreshes it.
+//                       The mock server hcmock.py must run (run.sh starts it).
+//   --isbn ISBN         the ISBN of the open book in the sim KoboReader.sqlite
+//   --steps "A;B;..."   for --screenshot: after the NickelSync page opens, run
+//                       these steps instead of a sync. A step is the text of a
+//                       button or of a search result to tap, "wait:MS", or
+//                       "expect:TEXT" / "absent:TEXT" to check the labels on
+//                       the screen. A png follows each tap and wait.
 //
 // Exit codes in --screenshot mode: 0 pass, 3 no icon in the reading menu,
 // 4 page button not found, 5 a NickelSync toast was not moved to the top,
 // 6 no result toast within 90 s, 7 setting button not found, 8 a value
 // changed when the settings page opened again, 9 an --expect count differs,
 // 10 the server stats state is not the expected state, 11 Wi-Fi is still on
-// after the page closed.
+// after the page closed, 12 a step target was not found, 13 an expect or
+// absent check failed.
 #include <QApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -57,6 +71,8 @@
 #include <QMenu>
 #include <QPainter>
 #include <QSettings>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTimer>
 
 #include <cstdio>
@@ -282,6 +298,101 @@ static void runAuto(QString const &kind, QMap<QString, int> const &expect) {
     poll->start(250);
 }
 
+// tappable finds the visible button or search result with this text, or with
+// this first line. The last match is on top, as pages are added later.
+static QLabel *tappable(QString const &text) {
+    QLabel *found = nullptr;
+    for (TouchLabel *t : nickelstub_mainWindow()->findChildren<TouchLabel *>())
+        if (t->isVisible() && (t->text() == text || t->text().section(QLatin1Char('\n'), 0, 0) == text))
+            found = t;
+    return found;
+}
+
+static bool shown(QString const &text) {
+    for (QLabel *l : nickelstub_mainWindow()->findChildren<QLabel *>())
+        if (l->isVisible() && l->text().contains(text))
+            return true;
+    return false;
+}
+
+static void runStep(QStringList const &steps, int i) {
+    if (i == steps.size()) {
+        QTimer::singleShot(0, qApp, &QApplication::quit);
+        return;
+    }
+    QString s = steps[i];
+    if (s.startsWith(QLatin1String("expect:")) || s.startsWith(QLatin1String("absent:"))) {
+        bool want = s.startsWith(QLatin1String("expect:"));
+        if (shown(s.mid(7)) != want) {
+            std::fprintf(stderr, "sim: step %s\n", qPrintable(s));
+            return fail(13, want ? "expected text not shown" : "text shown that must be absent");
+        }
+        std::fprintf(stderr, "sim: step %s: ok\n", qPrintable(s));
+        return runStep(steps, i + 1);
+    }
+    int wait = 1500;
+    if (s.startsWith(QLatin1String("wait:"))) {
+        wait = s.mid(5).toInt();
+    } else {
+        QLabel *t = tappable(s);
+        if (!t) {
+            std::fprintf(stderr, "sim: step %s\n", qPrintable(s));
+            return fail(12, "step target not found");
+        }
+        QMetaObject::invokeMethod(t, "tapped", Q_ARG(bool, false));
+    }
+    QTimer::singleShot(wait, [steps, i, s] {
+        shot(s.startsWith(QLatin1String("wait:")) ? QStringLiteral("wait") : QStringLiteral("tap ") + s);
+        runStep(steps, i + 1);
+    });
+}
+
+// runSteps opens the NickelSync page, then runs the steps.
+static void runSteps(QStringList const &steps) {
+    QDir().mkpath(shotDir);
+    QTimer::singleShot(300, [steps] {
+        nickelstub_readingView()->showMenu();
+        QTimer::singleShot(300, [steps] {
+            QLabel *icon = nickelstub_mainWindow()->findChild<QLabel *>(QStringLiteral("nickelsyncIcon"));
+            if (!icon)
+                return fail(3, "no nickelsyncIcon in the reading menu");
+            QMetaObject::invokeMethod(icon, "tapped", Q_ARG(bool, false));
+            QTimer::singleShot(500, [steps] {
+                shot(QStringLiteral("nickelsync page"));
+                runStep(steps, 0);
+            });
+        });
+    });
+    QTimer::singleShot(90 * 1000, [] { fail(6, "the steps did not end within 90 s"); });
+}
+
+// setupHardcover writes the config key, the token store and the sim database.
+static void setupHardcover(QString const &state, QString const &isbn) {
+    QSettings cfg(QStringLiteral("/mnt/onboard/.adds/nickelsync/config.ini"), QSettings::IniFormat);
+    cfg.setValue(QStringLiteral("NickelSync/Hardcover"), true);
+    if (state != QLatin1String("signed-out")) {
+        bool stale = state == QLatin1String("stale");
+        QSettings store(QStringLiteral("/mnt/onboard/.adds/nickelsync/hardcover.ini"), QSettings::IniFormat);
+        store.setValue(QStringLiteral("auth/access_token"), stale ? "hc_at_old" : "hc_at_sim");
+        store.setValue(QStringLiteral("auth/refresh_token"), stale ? "hc_rt_old" : "hc_rt_sim");
+        store.setValue(QStringLiteral("auth/expires_at"), QDateTime::currentDateTimeUtc().addDays(7));
+    }
+    QDir().mkpath(QStringLiteral("/mnt/onboard/.kobo"));
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("sim"));
+        db.setDatabaseName(QStringLiteral("/mnt/onboard/.kobo/KoboReader.sqlite"));
+        if (db.open()) {
+            QSqlQuery q(db);
+            q.exec(QStringLiteral("CREATE TABLE IF NOT EXISTS content (ContentID TEXT, ContentType INTEGER, ISBN TEXT)"));
+            q.prepare(QStringLiteral("INSERT INTO content VALUES (?, 6, ?)"));
+            q.addBindValue(simOptions.bookId);
+            q.addBindValue(isbn);
+            q.exec();
+        }
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("sim"));
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     QStringList args = app.arguments();
@@ -293,6 +404,8 @@ int main(int argc, char **argv) {
     QStringList settings;
     QString autoKind;
     QMap<QString, int> expect;
+    QString hardcover, isbn;
+    QStringList steps;
     for (int i = 1; i < args.size(); i++) {
         QString a = args[i];
         QString v = i + 1 < args.size() ? args[i + 1] : QString();
@@ -352,6 +465,15 @@ int main(int argc, char **argv) {
             for (QString const &kv : v.split(',', QString::SkipEmptyParts))
                 expect[kv.section('=', 0, 0)] = kv.section('=', 1).toInt();
             i++;
+        } else if (a == "--hardcover") {
+            hardcover = v;
+            i++;
+        } else if (a == "--isbn") {
+            isbn = v;
+            i++;
+        } else if (a == "--steps") {
+            steps = v.split(';', QString::SkipEmptyParts);
+            i++;
         } else {
             std::fprintf(stderr, "sim: unknown option %s\n", qPrintable(a));
             return 2;
@@ -380,6 +502,8 @@ int main(int argc, char **argv) {
         QSettings conf(QStringLiteral("/mnt/onboard/.kobo/Kobo/Kobo eReader.conf"), QSettings::IniFormat);
         conf.setValue(QStringLiteral("OneStoreServices/api_endpoint"), fakeserver_start());
     }
+    if (!hardcover.isEmpty())
+        setupHardcover(hardcover, isbn);
 
     QWidget *w = nickelstub_mainWindow();
     w->setFixedSize(size);
@@ -401,6 +525,8 @@ int main(int argc, char **argv) {
 
     if (!shotDir.isEmpty() && !autoKind.isEmpty()) {
         runAuto(autoKind, expect);
+    } else if (!shotDir.isEmpty() && !steps.isEmpty()) {
+        runSteps(steps);
     } else if (!shotDir.isEmpty()) {
         app.installEventFilter(new ShotFilter());
         runScreenshot(pick, settings, expectStats);
