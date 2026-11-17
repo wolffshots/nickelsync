@@ -38,6 +38,10 @@ struct SimOptions {
     int pullMs = 1000;
     int syncMs = 3000;
     QStringList barIcons; // other mods with an icon in the reading menu bar
+    // The open book, for the Content getters.
+    QString contentId = QStringLiteral("file:///mnt/onboard/Books/The Lighthouse Keeper.kepub.epub");
+    QString title = QStringLiteral("The Lighthouse Keeper");
+    QString author = QStringLiteral("Mara Quill");
 };
 extern SimOptions simOptions;
 

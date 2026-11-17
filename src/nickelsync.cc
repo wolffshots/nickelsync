@@ -20,6 +20,9 @@
 // the top bar of the reading menu, and settingsIcon is the overflow icon. A
 // tap opens the NickelSync page, a full-screen N3Dialog.
 //
+// With Hardcover=true in the config, the page also has a read-only Hardcover
+// section. It has its own OAuth sign-in. See hardcover.h.
+//
 // Boot safety: the mod hooks no Nickel function. Until a reading menu shows,
 // it only watches the trigger file and checks the type of each Qt event in the
 // event filter. So a fault in this mod cannot run at boot after the NickelHook
@@ -41,6 +44,8 @@
 
 #include <NickelHook.h>
 
+#include "hardcover.h"
+#include "nickel.h"
 #include "nickelsync.h"
 
 #define NS_DIR       "/mnt/onboard/.adds/nickelsync"
@@ -83,29 +88,29 @@ static N3SyncManager *(*N3SyncManager__sharedInstance)();
 static void (*N3SyncManager__silentSync)(N3SyncManager *);
 static bool (*SyncManagerBase__isSyncing)(N3SyncManager const *);
 
-static WirelessManager *(*WirelessManager__sharedInstance)();
-static bool (*WirelessManager__connected)(WirelessManager *);
+WirelessManager *(*WirelessManager__sharedInstance)();
+bool (*WirelessManager__connected)(WirelessManager *);
 
 static WirelessWorkflowManager *(*WirelessWorkflowManager__sharedInstance)();
 static void (*WirelessWorkflowManager__connectWirelessSilently)(WirelessWorkflowManager *);
 static bool (*WirelessWorkflowManager__isAirplaneMode)(WirelessWorkflowManager *);
 static void (*WirelessWorkflowManager__setAirplaneMode)(WirelessWorkflowManager *, bool);
 
-static MainWindowController *(*MainWindowController__sharedInstance)();
+MainWindowController *(*MainWindowController__sharedInstance)();
 static void (*MainWindowController__toast)(MainWindowController *, QString const &, QString const &, int);
 
 // Optional. If a firmware lacks them, NickelSync only runs the full sync.
-static QWidget *(*MainWindowController__viewWithObjectName)(MainWindowController const *, QString const &);
-static void const *(*ReadingView__getVolume)(void const *); // returns Volume const&
+QWidget *(*MainWindowController__viewWithObjectName)(MainWindowController const *, QString const &);
+void const *(*ReadingView__getVolume)(void const *); // returns Volume const&
 
 // Optional. If a firmware lacks them, the reading menu has no NickelSync icon.
 // The object sizes are the sizes that NickelHardcover allocates.
-static void (*TouchLabel__constructor)(QLabel *, QWidget *, QFlags<Qt::WindowType>);
+void (*TouchLabel__constructor)(QLabel *, QWidget *, QFlags<Qt::WindowType>);
 static void (*TouchLabel__setHitStateEnabled)(QLabel *, bool);
-static void (*N3ButtonLabel__constructor)(QLabel *, QWidget *);
-static QWidget *(*N3DialogFactory__getDialog)(QWidget *, bool);
-static void (*N3Dialog__setTitle)(QWidget *, QString const &);
-static QWidget *(*MainWindowController__pushView)(MainWindowController *, QWidget *);
+void (*N3ButtonLabel__constructor)(QLabel *, QWidget *);
+QWidget *(*N3DialogFactory__getDialog)(QWidget *, bool);
+void (*N3Dialog__setTitle)(QWidget *, QString const &);
+QWidget *(*MainWindowController__pushView)(MainWindowController *, QWidget *);
 
 static NickelSync *controller = nullptr;
 
@@ -548,6 +553,8 @@ void NickelSync::showPage() {
         l->addWidget(button, 0, Qt::AlignLeft);
         pageLabel(l, "nsDesc", QString::fromUtf8(b.desc));
     }
+    if (Hardcover::enabled())
+        Hardcover::instance()->addSection(l, screen);
     l->addStretch(1);
 
     page = N3DialogFactory__getDialog(content, true);
@@ -630,6 +637,7 @@ static bool nickelsync_uninstall() {
     nh_delete_file(NS_NM);
     nh_delete_file(NS_CONFIG);
     nh_delete_file(NS_LOG);
+    nh_delete_file(NS_DIR "/hardcover.ini");
     nh_delete_dir(NS_DIR);
     return true;
 }
@@ -669,6 +677,9 @@ static struct nh_dlsym NickelSyncDlsym[] = {
     { .name = "_ZN15N3DialogFactory9getDialogEP7QWidgetb",                   .out = nh_symoutptr(N3DialogFactory__getDialog),               .desc = "reading menu icon", .optional = true },
     { .name = "_ZN8N3Dialog8setTitleERK7QString",                            .out = nh_symoutptr(N3Dialog__setTitle),                       .desc = "reading menu icon", .optional = true },
     { .name = "_ZN20MainWindowController8pushViewEP7QWidget",                .out = nh_symoutptr(MainWindowController__pushView),           .desc = "reading menu icon", .optional = true },
+    { .name = "_ZNK7Content5getIdEv",                                        .out = nh_symoutptr(Content__getId),                           .desc = "Hardcover section", .optional = true },
+    { .name = "_ZNK7Content8getTitleEv",                                     .out = nh_symoutptr(Content__getTitle),                        .desc = "Hardcover section", .optional = true },
+    { .name = "_ZNK7Content14getAttributionEv",                              .out = nh_symoutptr(Content__getAttribution),                  .desc = "Hardcover section", .optional = true },
     {0},
 };
 // clang-format on

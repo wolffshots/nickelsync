@@ -8,16 +8,19 @@ BUILD     := build
 CXX       := g++
 MOC       := moc
 RCC       := rcc
-QT_CFLAGS := $(shell pkg-config --cflags Qt5Widgets)
-QT_LIBS   := $(shell pkg-config --libs Qt5Widgets)
+QT_CFLAGS := $(shell pkg-config --cflags Qt5Widgets Qt5Network Qt5Sql)
+QT_LIBS   := $(shell pkg-config --libs Qt5Widgets Qt5Network Qt5Sql)
+# The Hardcover code talks to the mock server hcmock.py, not to Hardcover.
+HC_MOCK_PORT := 5931
 CXXFLAGS  := -std=gnu++11 -fPIC -g $(QT_CFLAGS) -Wall -Wextra -Wno-deprecated-declarations \
-             -Wno-missing-field-initializers -MMD -MP -I. -I../src -I../NickelHook
+             -Wno-missing-field-initializers -MMD -MP -I. -I../src -I../NickelHook \
+             -DHC_API='"http://127.0.0.1:$(HC_MOCK_PORT)"' -DHC_CLIENT_ID='"nickelsync-sim"'
 
 vpath %.cc ../src .
 vpath %.h  ../src .
 
-SRCS   := nickelsync.cc nickelstub.cc nh_sim.cc main.cc
-MOCS   := nickelsync.h nickelstub.h
+SRCS   := nickelsync.cc hardcover.cc hardcoverpage.cc nickelstub.cc nh_sim.cc main.cc
+MOCS   := nickelsync.h hardcover.h nickelstub.h
 OBJS   := $(addprefix $(BUILD)/,$(SRCS:.cc=.o)) $(addprefix $(BUILD)/moc_,$(MOCS:.h=.o)) $(BUILD)/qrc_sim.o
 TARGET := nickelsync-sim
 

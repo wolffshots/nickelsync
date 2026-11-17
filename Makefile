@@ -5,11 +5,11 @@
 include ./NickelHook/NickelHook.mk
 
 override LIBRARY  := libnickelsync.so
-override SOURCES  += src/nickelsync.cc
+override SOURCES  += src/nickelsync.cc src/hardcover.cc src/hardcoverpage.cc
 override CFLAGS   += -Wall -Wextra -Werror -Wno-missing-field-initializers -fvisibility=hidden
 override CXXFLAGS += -Wall -Wextra -Werror -Wno-missing-field-initializers -fvisibility=hidden -fvisibility-inlines-hidden
-override MOCS     += src/nickelsync.h
-override PKGCONF  += Qt5Widgets
+override MOCS     += src/nickelsync.h src/hardcover.h
+override PKGCONF  += Qt5Widgets Qt5Network Qt5Sql
 override KOBOROOT += res/nm:/mnt/onboard/.adds/nm/nickelsync
 override KOBOROOT += res/uninstall:/mnt/onboard/.adds/nickelsync/uninstall
 
