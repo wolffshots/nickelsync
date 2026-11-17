@@ -43,11 +43,10 @@
 #define HC_API "https://api.hardcover.app"
 #endif
 // The public id of the NickelSync OAuth app ("Mobile, desktop, or CLI", with
-// the Device Authorization Grant on). A public client has no secret.
-// ponytail: a placeholder until the app is registered. Sign-in fails with
-// invalid_client until then. Put the real id here.
+// the Device Authorization Grant on, no redirect URIs, and the 4 scopes of
+// HC_SCOPE). A public client has no secret.
 #ifndef HC_CLIENT_ID
-#define HC_CLIENT_ID "nickelsync-client-id-placeholder"
+#define HC_CLIENT_ID "f3d2c018-0ac2-46d9-95a9-a746f1046d78"
 #endif
 #define HC_SCOPE "read:me:content read:library read:journal read:catalog"
 
