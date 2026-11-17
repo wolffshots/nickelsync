@@ -732,7 +732,10 @@ void followDarkMode(QWidget *page, QWidget *content) {
         frame->setStyleSheet(frame->styleSheet() + QStringLiteral("\n#mainFrame { background-color: black; }"));
     // setStyleSheet also polishes the page and its children again, so that
     // the new property applies to the widgets that the style has polished.
-    page->setStyleSheet(QStringLiteral("N3ButtonLabel[borderedButton=true] { border-color: white; }"));
+    // Ui_N3Dialog has set a style sheet on the page already: the button
+    // padding and the tap inversion of labels. So add to it, do not replace it.
+    page->setStyleSheet(page->styleSheet() +
+                        QStringLiteral("\nN3ButtonLabel[borderedButton=true] { border-color: white; }"));
     for (QLabel *l : page->findChildren<QLabel *>()) {
         if (content->isAncestorOf(l) || !l->pixmap() || l->pixmap()->isNull())
             continue;

@@ -198,8 +198,12 @@ protected:
 
 class TouchLabel : public QLabel {
     Q_OBJECT
+    // Nickel draws a tapped label inverted. The style sheet of Ui_N3Dialog
+    // sets this property on the labels of a dialog.
+    Q_PROPERTY(bool forceRepaintOnInvert MEMBER forceRepaintOnInvert)
 public:
     explicit TouchLabel(QWidget *parent) : QLabel(parent) {}
+    bool forceRepaintOnInvert = false;
 Q_SIGNALS:
     void tapped(bool);
 protected:

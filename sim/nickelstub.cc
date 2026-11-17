@@ -421,6 +421,9 @@ N3ButtonLabel::N3ButtonLabel(QWidget *parent) : TouchLabel(parent) {
 
 N3Dialog::N3Dialog(QWidget *content) : QFrame(nullptr) {
     setObjectName(QStringLiteral("N3Dialog"));
+    // Ui_N3Dialog sets a style sheet on the dialog. A mod that replaces it
+    // loses the tap inversion and the button padding of Nickel.
+    setStyleSheet(QStringLiteral("TouchLabel { qproperty-forceRepaintOnInvert: true; }"));
     QVBoxLayout *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     // As in Ui_N3Dialog: the frame mainFrame has its own style sheet with a

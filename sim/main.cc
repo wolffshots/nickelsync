@@ -465,6 +465,11 @@ static void runStep(QStringList const &steps, int i) {
         N3Dialog *d = topDialog();
         QImage img = d ? d->grab().toImage() : QImage();
         bool ok = !img.isNull() && qGray(img.pixel(img.width() / 2, img.height() - 5)) < 64;
+        // The style sheet of the dialog must still apply: it gives each
+        // label the tap inversion.
+        for (TouchLabel *t : d ? d->findChildren<TouchLabel *>() : QList<TouchLabel *>())
+            if (t->isVisible() && !t->property("forceRepaintOnInvert").toBool())
+                ok = false;
         // The frame of the dialog shows in the gaps of the title row, for
         // example below the close icon.
         if (QLabel *close = d ? d->findChild<QLabel *>(QStringLiteral("n3Close")) : nullptr) {
