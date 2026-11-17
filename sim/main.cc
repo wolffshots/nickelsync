@@ -57,7 +57,8 @@
 //                       "expect:TEXT" / "absent:TEXT" to check the labels on
 //                       the screen. "back" and "close" tap the back or close
 //                       button of the top page. "closed" checks that no page
-//                       is left. A png follows each tap and wait.
+//                       is left. "nohit:TEXT" checks that the button has no
+//                       hit state. A png follows each tap and wait.
 //
 // Exit codes in --screenshot mode: 0 pass, 3 no icon in the reading menu,
 // 4 page button not found, 5 a NickelSync toast was not moved to the top,
@@ -68,7 +69,8 @@
 // absent check failed, 14 a visible button has no button style, 15 the close
 // button left a NickelSync page open, 16 the Hardcover button does not match
 // the Hardcover setting, 17 the back button did not close its page, 18 with
-// --flush-log, a step made more than one large paint pass or a repeated pass.
+// --flush-log, a step made more than one large paint pass or a repeated pass,
+// 19 a button that opens a page has the hit state (nohit: step).
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
@@ -440,6 +442,15 @@ static void runStep(QStringList const &steps, int i) {
         if (shown(s.mid(7)) != want) {
             std::fprintf(stderr, "sim: step %s\n", qPrintable(s));
             return fail(13, want ? "expected text not shown" : "text shown that must be absent");
+        }
+        std::fprintf(stderr, "sim: step %s: ok\n", qPrintable(s));
+        return runStep(steps, i + 1);
+    }
+    if (s.startsWith(QLatin1String("nohit:"))) {
+        QLabel *t = tappable(s.mid(6));
+        if (!t || t->property("simHitState") != QVariant(false)) {
+            std::fprintf(stderr, "sim: step %s\n", qPrintable(s));
+            return fail(19, "a button that opens a page has the hit state");
         }
         std::fprintf(stderr, "sim: step %s: ok\n", qPrintable(s));
         return runStep(steps, i + 1);

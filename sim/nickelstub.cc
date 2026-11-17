@@ -494,7 +494,8 @@ static void TouchLabel__constructor(QLabel *mem, QWidget *parent, QFlags<Qt::Win
     static_assert(sizeof(TouchLabel) <= 128, "TouchLabel does not fit");
     new (mem) TouchLabel(parent);
 }
-static void TouchLabel__setHitStateEnabled(QLabel *, bool) {}
+// The sim draws no hit state. It keeps the setting for the nohit: step.
+static void TouchLabel__setHitStateEnabled(QLabel *l, bool on) { l->setProperty("simHitState", on); }
 static void N3ButtonLabel__constructor(QLabel *mem, QWidget *parent) {
     static_assert(sizeof(N3ButtonLabel) <= 512, "N3ButtonLabel does not fit");
     new (mem) N3ButtonLabel(parent);

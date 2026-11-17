@@ -119,7 +119,7 @@ if [ "${1:-}" = "--all" ]; then
                             --steps "Hardcover;Load from Hardcover;expect:Connect to Wi-Fi first."
     # Each page change is one large paint pass, and a value tap is a small one.
     run pages-flush         --wifi on --hardcover signed-in --stats store --flush-log \
-                            --steps "Settings;60 s;90 s;back;Hardcover;back;Hardcover;close;closed"
+                            --steps "nohit:Settings;nohit:Hardcover;Settings;60 s;90 s;back;Hardcover;back;Hardcover;close;closed"
     run hc-signout          --wifi on --hardcover signed-in --steps "Hardcover;Sign out;expect:Sign in to Hardcover"
     exit $rc
 fi

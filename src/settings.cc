@@ -348,11 +348,12 @@ int settingInt(char const *key) {
     return s ? valueOf(readConfig(), *s).toInt() : 0;
 }
 
-void SettingsPage::addButton(QBoxLayout *layout, QWidget *parent) {
+QLabel *SettingsPage::addButton(QBoxLayout *layout, QWidget *parent) {
     static SettingsPage *instance = new SettingsPage();
     QLabel *b = newButton(parent, QStringLiteral("Settings"));
     connect(b, SIGNAL(tapped(bool)), instance, SLOT(open()));
     layout->addWidget(b, 0, Qt::AlignLeft);
+    return b;
 }
 
 // open opens the settings page over the NickelSync page, in the same way as

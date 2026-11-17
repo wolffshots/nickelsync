@@ -22,8 +22,8 @@ class SettingsPage : public QObject {
     Q_OBJECT
 
 public:
-    // addButton adds the "Settings" button to the NickelSync page.
-    static void addButton(QBoxLayout *layout, QWidget *parent);
+    // addButton adds the "Settings" button to the NickelSync page and returns it.
+    static QLabel *addButton(QBoxLayout *layout, QWidget *parent);
 
 private Q_SLOTS:
     void open();

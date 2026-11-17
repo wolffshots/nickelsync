@@ -613,11 +613,18 @@ void NickelSync::showPage() {
     QHBoxLayout *more = new QHBoxLayout();
     more->setSpacing(px(24));
     l->addLayout(more);
-    SettingsPage::addButton(more, content);
+    QLabel *settingsButton = SettingsPage::addButton(more, content);
     // The settings page can turn Hardcover on or off, so the button is always
     // there. onSubPageClosed shows or hides it.
-    hcButton = Hardcover::instance()->addButton(more, screen);
+    QLabel *hardcoverButton = Hardcover::instance()->addButton(more, screen);
+    hcButton = hardcoverButton;
     hcButton->setVisible(Hardcover::enabled());
+    // These buttons open a page over this one. With the hit state, Nickel
+    // draws a tapped button as pressed, and the button stays pressed below the
+    // new page. Back then shows this page and redraws the button: a second
+    // e-ink update. The reading menu icon has no hit state for the same reason.
+    TouchLabel__setHitStateEnabled(settingsButton, false);
+    TouchLabel__setHitStateEnabled(hardcoverButton, false);
     more->addStretch(1);
     // Below the buttons, so that the buttons do not move when the stats load.
     l->addSpacing(px(56));
