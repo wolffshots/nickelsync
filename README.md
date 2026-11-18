@@ -6,7 +6,7 @@ Inside a book, NickelSync also syncs the reading position of the open book. The 
 
 The sync is the same sync as the stock **Sync** button. It uses the sync server in `Kobo eReader.conf`, so it also works with Calibre-Web, Autocaliweb and Calibre-Web-NextGen.
 
-Status: tested on a Kobo Libra Colour with firmware 4.46.23852. The test used Calibre-Web-NextGen, with a second device that syncs the same book.
+Status: tested on a Kobo Libra Colour with firmware 4.46.23852. The test used Calibre-Web-NextGen, with a second device that syncs the same book. The build for firmware 6.x (Qt 6) loads in an emulator of firmware 6.0.279225. No device with firmware 6.x tested it.
 
 ## Requirements
 
@@ -27,6 +27,16 @@ Without kpm:
 1. Download `KoboRoot.tgz` from the [latest release](https://github.com/wolffshots/nickelsync/releases/latest).
 2. Copy it to `KOBOeReader/.kobo/` on the device.
 3. Eject the device. Nickel installs the file and reboots.
+
+`KoboRoot.tgz` works only on firmware 4.x. Firmware 6.x does not read it. For 4.x and 6.x, use `Kobo.tgz` from the same release. Install it in the same way: copy it to `KOBOeReader/.kobo/` and eject. `Kobo.tgz` holds a Qt 5 build for firmware 4.x and a Qt 6 build for firmware 6.x. Each firmware loads only its build.
+
+`Kobo.tgz` installs only into `/usr/local/Kobo`. So at the first start, NickelSync writes these files itself:
+
+- `KOBOeReader/.adds/nickelsync/uninstall`, the uninstall flag. See [Uninstall](#uninstall).
+- `KOBOeReader/.adds/nm/nickelsync`, the NickelMenu item. NickelSync does not replace a file that exists. NickelMenu reads the new file at the next start.
+- `KOBOeReader/.adds/nickelsync/.installed`, which records that NickelSync wrote the files.
+
+A firmware update removes the mod, because it writes a new system partition. This includes the update from 4.x to 6.x. The files on `KOBOeReader` stay, and `config.ini` too. Install `Kobo.tgz` again. kpm 0.13.0 or later does this for you: it stages `Kobo.tgz` at the next `kpm update`.
 
 ## Use
 
@@ -203,7 +213,9 @@ Without kpm:
 1. Delete `KOBOeReader/.adds/nickelsync/uninstall`.
 2. Reboot the device.
 
-NickelHook then removes the mod. The mod also removes its NickelMenu file, its configuration, `config.ini.corrupt`, its log and its Hardcover tokens.
+NickelHook then removes the mod. The mod also removes its NickelMenu file, its configuration, `config.ini.corrupt`, its log, its Hardcover tokens, the `.installed` file and the build for the other Qt version.
+
+Delete only the file `uninstall`, not the folder `KOBOeReader/.adds/nickelsync`. Without `.installed`, NickelSync writes the `uninstall` file again at the next start and stays installed.
 
 ## How it works
 
@@ -212,7 +224,7 @@ NickelSync is a [NickelHook](https://github.com/pgaskin/NickelHook) mod. It inst
 When you tap a page button or the trigger file changes, NickelSync does these steps:
 
 1. If Wi-Fi is not connected, it calls `WirelessWorkflowManager::connectWirelessSilently()`. It then waits for the `networkConnected()` signal.
-2. If a kepub book is open, it gets the position from the server. It finds the `ReadingView` with `MainWindowController::viewWithObjectName()` and the reader child that inherits `KepubBookReaderBase`. It invokes the reader slot `onResume()`, which Nickel also calls when the device wakes. Nickel then sends `GET .../state` and shows the prompt if the server is newer.
+2. If a kepub book is open, it gets the position from the server. It finds the `ReadingView` with `MainWindowController::viewWithObjectName()` and the reader child that inherits `KepubBookReaderBase`. It invokes the reader slot `onResume()`, which Nickel also calls when the device wakes. Nickel then sends `GET .../state` and shows the prompt if the server is newer. Firmware 6.0 has no `KepubBookReaderBase`, and its reader slot `onResume()` does not get the position. So on 6.x NickelSync skips steps 2 to 4 and runs the full sync only.
 3. It waits for the `bookmarkRequestSuccess(Volume)` signal of the sync manager, then 1.5 seconds more. If a `ConfirmationDialog` is visible, it does not send the position.
 4. If no prompt is visible, it emits the `ReadingView` signals `saveBookmark()` and `sendBookmark(Volume)`. Nickel emits the same two signals when you leave a book. Nickel then sends `PUT .../state`.
 5. It calls `N3SyncManager::silentSync()`. With `QuickSync=true`, it stops before this step if it got the position in step 3.
@@ -237,14 +249,22 @@ NickelSync is designed so that it cannot stop the device from booting:
 
 ## Build
 
-The build uses [NickelTC](https://github.com/pgaskin/NickelTC) in a container:
+NickelSync uses the Qt 6 fork of NickelHook (`nicoverbruggen/NickelHook`, branch `qt6-support`). The fork builds for Qt 5 and Qt 6. The Qt 5 build for firmware 4.x uses [NickelTC](https://github.com/pgaskin/NickelTC) in a container:
 
 ```sh
 git submodule update --init
 podman run --rm -v "$PWD":/src -w /src ghcr.io/pgaskin/nickeltc:1.0 make clean all koboroot
 ```
 
-The build writes `KoboRoot.tgz`. A `v*` tag runs the release workflow, which builds the file and attaches it to a GitHub release.
+The build writes `KoboRoot.tgz`. A `v*` tag runs the release workflow. It builds `Kobo.tgz` and `KoboRoot.tgz` with the script below and attaches both to a GitHub release.
+
+To build `Kobo.tgz` for firmware 4.x and 6.x, run this script with Podman (or `ENGINE=docker`):
+
+```sh
+./tools/build-kobo.sh
+```
+
+The script builds the Qt 6 library `libnickelsync-qt6.so` in the image `ghcr.io/nicoverbruggen/kobuild:qt6-v0.5.3` (pinned by digest) with `make NH_QT_MAJOR=6`. Then it builds the Qt 5 library and `KoboRoot.tgz` with NickelTC. It writes `Kobo.tgz` with both libraries in `imageformats/`. Set `VERSION=<tag>` to set the version string. Else the script uses `git describe`.
 
 ## License
 

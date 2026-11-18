@@ -31,6 +31,16 @@
 // menu shows, it only watches the trigger file and checks the type of each Qt
 // event in the event filters. So a fault in this mod cannot run at boot after
 // the NickelHook failsafe window, and cannot cause a boot loop.
+//
+// One source builds for Qt 5 (firmware 4.x) and Qt 6 (firmware 6.x). Kobo.tgz
+// holds both builds. Each Qt loads only the build of its own major version.
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <QApplication>
 #include <QDir>
@@ -60,7 +70,16 @@
 #define NS_CONFIG    NS_DIR "/config.ini"
 #define NS_LOG       NS_DIR "/log.txt"
 #define NS_XFLAG     NS_DIR "/uninstall"
-#define NS_NM        "/mnt/onboard/.adds/nm/nickelsync"
+#define NS_RECEIPT   NS_DIR "/.installed"
+#define NS_NM_DIR    "/mnt/onboard/.adds/nm"
+#define NS_NM        NS_NM_DIR "/nickelsync"
+// NickelHook deletes the library that runs. The uninstall deletes the build
+// for the other Qt major version.
+#if QT_VERSION_MAJOR >= 6
+#define NS_OTHER_LIB "/usr/local/Kobo/imageformats/libnickelsync.so"
+#else
+#define NS_OTHER_LIB "/usr/local/Kobo/imageformats/libnickelsync-qt6.so"
+#endif
 #define NS_TRIGGER   "/tmp/nickelsync"
 #define NICKEL_CONF  "/mnt/onboard/.kobo/Kobo/Kobo eReader.conf"
 
@@ -254,6 +273,15 @@ QObject *NickelSync::openBook() {
         log("BOOK: no open book");
         return nullptr;
     }
+#if QT_VERSION_MAJOR >= 6
+    // Firmware 6.0 has no KepubBookReaderBase. Its kepub reader,
+    // PageImageReader, has an onResume() slot, but in libnickel 6.0.279225 that
+    // slot does not request the position from the server. No other reader
+    // calls ReadingExperienceBookmarkUpdater::requestBookmark. So only the full
+    // sync runs.
+    log("BOOK: this firmware has no reader slot that gets the reading position");
+    return nullptr;
+#else
     for (QObject *child : rv->findChildren<QObject *>()) {
         if (child->inherits("KepubBookReaderBase")) {
             view = rv;
@@ -262,6 +290,7 @@ QObject *NickelSync::openBook() {
     }
     log("BOOK: the open book is not a kepub");
     return nullptr;
+#endif
 }
 
 // startPull gets the reading position before the push. A push first would
@@ -528,10 +557,15 @@ void NickelSync::addIcon(QWidget *menuView) {
     }
     // A widget in a layout has no final size before the first show, so use
     // the size of the settings image.
+#if QT_VERSION_MAJOR >= 6
+    int height = settings->pixmap().isNull() ? settings->height() : settings->pixmap().height();
+#else
     int height = settings->pixmap() ? settings->pixmap()->height() : settings->height();
+#endif
 
+    // Nickel allocates 116 bytes for a TouchLabel on 6.0.279225.
     QLabel *icon = reinterpret_cast<QLabel *>(calloc(1, 128));
-    TouchLabel__constructor(icon, settings->parentWidget(), 0);
+    TouchLabel__constructor(icon, settings->parentWidget(), Qt::WindowFlags());
     TouchLabel__setHitStateEnabled(icon, false);
     icon->setObjectName(QStringLiteral(NS_ICON));
     icon->setPixmap(QPixmap(QStringLiteral(NS_PIX)).scaledToHeight(height, Qt::SmoothTransformation));
@@ -841,6 +875,69 @@ static int nickelsync_init() {
     return 0;
 }
 
+// The NickelMenu entry, from res/nm. The build runs in the repository root, so
+// the assembler finds res/nm there.
+asm(".section .rodata\n"
+    ".global ns_nm_entry\n"
+    ".hidden ns_nm_entry\n"
+    ".type ns_nm_entry, %object\n"
+    "ns_nm_entry:\n"
+    ".incbin \"res/nm\"\n"
+    ".byte 0\n"
+    ".size ns_nm_entry, . - ns_nm_entry\n"
+    ".previous\n");
+extern "C" __attribute__((visibility("hidden"))) char const ns_nm_entry[];
+
+// seed_file writes data to path through a temporary file, so that a reader
+// never sees a part of the file.
+static bool seed_file(char const *path, char const *data) {
+    char tmp[256];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0)
+        return false;
+    size_t len = strlen(data);
+    bool ok = write(fd, data, len) == (ssize_t)len && fsync(fd) == 0;
+    ok = close(fd) == 0 && ok;
+    if (ok && rename(tmp, path) == 0)
+        return true;
+    unlink(tmp);
+    return false;
+}
+
+// nickelsync_seed writes the files that KoboRoot.tgz ships and Kobo.tgz cannot,
+// because Kobo.tgz installs only into /usr/local/Kobo: the uninstall flag file
+// and the NickelMenu entry. It runs once for each install. The receipt file
+// .installed marks a done seed. After that, a missing flag file means
+// uninstall again.
+//
+// NickelHook checks the flag in nh_init, a constructor without a priority. A
+// constructor with a priority runs before it. So this function cannot use Qt
+// or the nh_* helpers: they are not ready yet.
+__attribute__((constructor(200))) static void nickelsync_seed() {
+    if (access(NS_RECEIPT, F_OK) == 0 || errno != ENOENT)
+        return;
+    mkdir("/mnt/onboard/.adds", 0755);
+    mkdir(NS_DIR, 0755);
+    mkdir(NS_NM_DIR, 0755);
+    if (!seed_file(NS_XFLAG, ""))
+        return; // NickelHook uninstalls the mod, because the flag is missing.
+    // Keep a NickelMenu entry that the user changed.
+    if (access(NS_NM, F_OK) != 0 && !seed_file(NS_NM, ns_nm_entry))
+        return; // no receipt, so the next start tries again
+    seed_file(NS_RECEIPT, "");
+}
+
+// NickelHook calls this after it deletes the library, before
+// nickelsync_uninstall. It deletes the receipt, so that the next install seeds
+// the files again. The NickelHook fork declares this function weak for its
+// resources.c. Without a definition the uninstall crashes Nickel: in fork
+// 0611c65 the linker replaces the call with a nop, and the function then
+// returns twice.
+extern "C" __attribute__((visibility("hidden"))) void nh_resources_uninstalled() {
+    nh_delete_file(NS_RECEIPT);
+}
+
 static bool nickelsync_uninstall() {
     nh_delete_file(NS_NM);
     nh_delete_file(NS_CONFIG);
@@ -848,6 +945,9 @@ static bool nickelsync_uninstall() {
     nh_delete_file(NS_LOG);
     nh_delete_file(NS_DIR "/hardcover.ini");
     nh_delete_dir(NS_DIR);
+    // Nothing else deletes this file: it is not the library that runs.
+    if (access(NS_OTHER_LIB, F_OK) == 0)
+        nh_delete_file(NS_OTHER_LIB);
     return true;
 }
 

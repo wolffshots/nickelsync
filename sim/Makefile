@@ -14,7 +14,7 @@ QT_LIBS   := $(shell pkg-config --libs Qt5Widgets Qt5Network Qt5Sql)
 HC_MOCK_PORT := 5931
 CXXFLAGS  := -std=gnu++11 -fPIC -g $(QT_CFLAGS) -Wall -Wextra -Wno-deprecated-declarations \
              -Wno-missing-field-initializers -MMD -MP -I. -I../src -I../NickelHook \
-             -DHC_API='"http://127.0.0.1:$(HC_MOCK_PORT)"' -DHC_CLIENT_ID='"nickelsync-sim"'
+             -DHC_API='"http://127.0.0.1:$(HC_MOCK_PORT)"' -DHC_CLIENT_ID='"nickelsync-sim"'              -Wa,-I.. # nickelsync.cc embeds res/nm with .incbin
 
 vpath %.cc ../src .
 vpath %.h  ../src .
