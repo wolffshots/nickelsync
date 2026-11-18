@@ -16,11 +16,13 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSaveFile>
 #include <QSettings>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -36,6 +38,7 @@
 
 #define HC_DIR    "/mnt/onboard/.adds/nickelsync"
 #define HC_STORE  HC_DIR "/hardcover.ini"
+#define HC_CACHE  HC_DIR "/hardcover-cache.json"
 #define KOBO_DB   "/mnt/onboard/.kobo/KoboReader.sqlite"
 
 // The sim builds with a mock server. See sim/Makefile.
@@ -55,6 +58,8 @@
 #endif
 
 static const int REQUEST_TIMEOUT_MS = 30 * 1000;
+static const qint64 CACHE_TTL = 24 * 3600; // seconds
+static QString const CACHE_TIME = QStringLiteral("yyyy-MM-ddTHH:mm:ss");
 
 static void hcLog(QString const &line) { nh_log("NickelSync: HC: %s", qPrintable(line)); }
 
@@ -239,6 +244,8 @@ void Hardcover::clearTokens() {
     QSettings store(QStringLiteral(HC_STORE), QSettings::IniFormat);
     store.remove(QStringLiteral("auth"));
     store.sync();
+    // The cache has data of the account, such as the journal.
+    QFile::remove(QStringLiteral(HC_CACHE));
     auth = SignedOut;
     loadState = NotLoaded;
     rebuild();
@@ -397,6 +404,55 @@ static QString isbnOf(QString const &contentId) {
     return isbn.trimmed();
 }
 
+// ---- cache ---------------------------------------------------------------
+
+// The cache keeps the Hardcover data that the pages show, so a page shows it
+// at once, also without Wi-Fi, and then updates it. It is a JSON object of
+// entries {"saved": UTC time, "data": value}. The keys are "edition/<ISBN>"
+// (the book id), "status/<book id>" and "journal/<book id>/<offset>". An entry
+// older than CACHE_TTL does not count, and the next write removes it.
+
+static QJsonObject readCache() {
+    QFile f(QStringLiteral(HC_CACHE));
+    if (!f.open(QIODevice::ReadOnly))
+        return QJsonObject();
+    return QJsonDocument::fromJson(f.readAll()).object();
+}
+
+static QDateTime savedAt(QJsonValue const &entry) {
+    QDateTime t = QDateTime::fromString(entry.toObject().value(QStringLiteral("saved")).toString(), CACHE_TIME);
+    t.setTimeSpec(Qt::UTC);
+    return t;
+}
+
+static bool fresh(QDateTime const &saved) {
+    return saved.isValid() && saved.secsTo(QDateTime::currentDateTimeUtc()) <= CACHE_TTL;
+}
+
+// cacheGet gets the data of a cache entry that is younger than CACHE_TTL.
+static bool cacheGet(QString const &key, QJsonValue &data, QDateTime &saved) {
+    QJsonValue e = readCache().value(key);
+    saved = savedAt(e);
+    if (!fresh(saved))
+        return false;
+    data = e.toObject().value(QStringLiteral("data"));
+    return true;
+}
+
+// cachePut saves the data of a key, and removes the old entries.
+static void cachePut(QString const &key, QJsonValue const &data) {
+    QJsonObject cache = readCache();
+    for (QJsonObject::iterator it = cache.begin(); it != cache.end();)
+        it = fresh(savedAt(it.value())) ? it + 1 : cache.erase(it);
+    QJsonObject e;
+    e.insert(QStringLiteral("saved"), QDateTime::currentDateTimeUtc().toString(CACHE_TIME));
+    e.insert(QStringLiteral("data"), data);
+    cache.insert(key, e);
+    QSaveFile f(QStringLiteral(HC_CACHE));
+    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(cache).toJson(QJsonDocument::Compact)) < 0 || !f.commit())
+        hcLog("CACHE: cannot write " HC_CACHE);
+}
+
 // ---- queries -------------------------------------------------------------
 
 static char const EDITION_QUERY[] =
@@ -424,23 +480,46 @@ static char const SEARCH_QUERY[] =
     "query NickelSyncSearch($query: String!, $limit: Int!, $page: Int!) {"
     " search(query: $query, query_type: \"Book\", per_page: $limit, page: $page) { results } }";
 
-// load finds the open book on Hardcover and gets its status.
+// load finds the open book on Hardcover and gets its status. A cached status
+// shows at once, and the reply of Hardcover updates it.
 void Hardcover::load() {
+    message.clear();
+    statusCache = CacheState();
+    QJsonValue cached;
+    QDateTime saved;
+    int id = linkedBook();
+    QString isbn;
+    if (id <= 0) {
+        isbn = isbnOf(book.contentId);
+        if (!isbn.isEmpty() && cacheGet(QStringLiteral("edition/") + isbn, cached, saved))
+            id = cached.toInt();
+    }
+    if (id > 0 && cacheGet(QStringLiteral("status/%1").arg(id), cached, saved)) {
+        hcLog(QStringLiteral("LOAD: book %1 from the cache").arg(id));
+        applyStatus(id, cached.toObject());
+        loadState = Loaded;
+        statusCache.saved = saved;
+        statusCache.updating = true;
+    }
     if (!wifiConnected()) {
-        message = QStringLiteral("Connect to Wi-Fi first.");
+        if (statusCache.saved.isValid()) {
+            statusCache.updating = false;
+            statusCache.error = QStringLiteral("Wi-Fi is off.");
+        } else {
+            loadState = NotLoaded;
+            message = QStringLiteral("Connect to Wi-Fi first.");
+        }
         rebuild();
         return;
     }
-    message.clear();
-    loadState = Loading;
+    if (!statusCache.saved.isValid())
+        loadState = Loading;
     rebuild();
-    int linked = linkedBook();
-    if (linked > 0) {
-        hcLog(QStringLiteral("LOAD: linked book %1").arg(linked));
-        loadStatus(linked);
+    if (id > 0) {
+        hcLog(QStringLiteral("LOAD: book %1").arg(id));
+        loadStatus(id);
         return;
     }
-    QString isbn = isbnOf(book.contentId);
     if (isbn.isEmpty()) {
         hcLog("LOAD: no ISBN, no link");
         loadState = NotFound;
@@ -452,22 +531,32 @@ void Hardcover::load() {
     QJsonArray isbns;
     isbns.append(isbn);
     vars.insert(QStringLiteral("isbn"), isbns);
-    graphql(EDITION_QUERY, vars, [this](QJsonObject const &data, QString const &error) {
-        if (!error.isEmpty()) {
-            loadState = Failed;
-            message = error;
-            rebuild();
-            return;
-        }
+    graphql(EDITION_QUERY, vars, [this, isbn](QJsonObject const &data, QString const &error) {
+        if (!error.isEmpty())
+            return loadFailed(error);
         QJsonArray editions = data.value(QStringLiteral("editions")).toArray();
-        int id = editions.isEmpty() ? 0 : editions.first().toObject().value(QStringLiteral("book_id")).toInt();
-        if (id <= 0) {
+        int found = editions.isEmpty() ? 0 : editions.first().toObject().value(QStringLiteral("book_id")).toInt();
+        if (found <= 0) {
             loadState = NotFound;
             rebuild();
             return;
         }
-        loadStatus(id);
+        cachePut(QStringLiteral("edition/") + isbn, found);
+        loadStatus(found);
     });
+}
+
+// loadFailed shows the error of a load. A cached status stays, and its cache
+// line shows the error.
+void Hardcover::loadFailed(QString const &error) {
+    if (statusCache.saved.isValid()) {
+        statusCache.updating = false;
+        statusCache.error = error;
+    } else {
+        loadState = Failed;
+        message = error;
+    }
+    rebuild();
 }
 
 static QDate dateOf(QJsonValue const &v) { return QDate::fromString(v.toString().left(10), Qt::ISODate); }
@@ -522,64 +611,89 @@ void Hardcover::loadStatus(int id) {
     QJsonObject vars;
     vars.insert(QStringLiteral("book"), id);
     graphql(STATUS_QUERY, vars, [this, id](QJsonObject const &data, QString const &error) {
-        if (!error.isEmpty()) {
-            loadState = Failed;
-            message = error;
-            rebuild();
-            return;
-        }
-        bookId = id;
-        status = Status();
-        QJsonObject b = data.value(QStringLiteral("books_by_pk")).toObject();
-        status.bookTitle = b.value(QStringLiteral("title")).toString();
-        status.subtitle = b.value(QStringLiteral("subtitle")).toString();
-        status.authors = bookAuthors(b);
-        status.series = bookSeries(b);
-        status.genres = bookGenres(b);
-        status.description = bookDescription(b);
-        status.year = b.value(QStringLiteral("release_year")).toInt();
-        status.bookPages = b.value(QStringLiteral("pages")).toInt();
-        status.rating = numberOf(b.value(QStringLiteral("rating")));
-        status.ratings = b.value(QStringLiteral("ratings_count")).toInt();
-        status.readers = b.value(QStringLiteral("users_read_count")).toInt();
-        QJsonArray users = data.value(QStringLiteral("me")).toArray();
-        QJsonObject me = users.isEmpty() ? QJsonObject() : users.first().toObject();
-        QSettings(QStringLiteral(HC_STORE), QSettings::IniFormat)
-            .setValue(QStringLiteral("auth/user_id"), me.value(QStringLiteral("id")).toInt());
-        QJsonArray ubs = me.value(QStringLiteral("user_books")).toArray();
-        if (!ubs.isEmpty()) {
-            QJsonObject ub = ubs.first().toObject();
-            status.inLibrary = true;
-            status.status = ub.value(QStringLiteral("user_book_status")).toObject().value(QStringLiteral("status")).toString();
-            status.updated = dateOf(ub.value(QStringLiteral("updated_at")));
-            status.userRating = numberOf(ub.value(QStringLiteral("rating")));
-            status.readCount = ub.value(QStringLiteral("read_count")).toInt();
-            QJsonArray reads = ub.value(QStringLiteral("user_book_reads")).toArray();
-            if (!reads.isEmpty()) {
-                QJsonObject r = reads.first().toObject();
-                QJsonValue p = r.value(QStringLiteral("progress"));
-                status.progress = p.isDouble() ? p.toDouble() : -1;
-                status.pages = r.value(QStringLiteral("progress_pages")).toInt();
-                status.started = dateOf(r.value(QStringLiteral("started_at")));
-                status.finished = dateOf(r.value(QStringLiteral("finished_at")));
-                status.editionPages = r.value(QStringLiteral("edition")).toObject().value(QStringLiteral("pages")).toInt();
-            }
-        }
+        if (!error.isEmpty())
+            return loadFailed(error);
+        cachePut(QStringLiteral("status/%1").arg(id), data);
+        applyStatus(id, data);
         hcLog(QStringLiteral("LOADED: book %1, in library %2").arg(id).arg(status.inLibrary));
+        statusCache = CacheState();
         loadState = Loaded;
         rebuild();
     });
 }
 
+// applyStatus reads the reply of the status query, from Hardcover or from the
+// cache.
+void Hardcover::applyStatus(int id, QJsonObject const &data) {
+    bookId = id;
+    status = Status();
+    QJsonObject b = data.value(QStringLiteral("books_by_pk")).toObject();
+    status.bookTitle = b.value(QStringLiteral("title")).toString();
+    status.subtitle = b.value(QStringLiteral("subtitle")).toString();
+    status.authors = bookAuthors(b);
+    status.series = bookSeries(b);
+    status.genres = bookGenres(b);
+    status.description = bookDescription(b);
+    status.year = b.value(QStringLiteral("release_year")).toInt();
+    status.bookPages = b.value(QStringLiteral("pages")).toInt();
+    status.rating = numberOf(b.value(QStringLiteral("rating")));
+    status.ratings = b.value(QStringLiteral("ratings_count")).toInt();
+    status.readers = b.value(QStringLiteral("users_read_count")).toInt();
+    QJsonArray users = data.value(QStringLiteral("me")).toArray();
+    QJsonObject me = users.isEmpty() ? QJsonObject() : users.first().toObject();
+    QSettings(QStringLiteral(HC_STORE), QSettings::IniFormat)
+        .setValue(QStringLiteral("auth/user_id"), me.value(QStringLiteral("id")).toInt());
+    QJsonArray ubs = me.value(QStringLiteral("user_books")).toArray();
+    if (!ubs.isEmpty()) {
+        QJsonObject ub = ubs.first().toObject();
+        status.inLibrary = true;
+        status.status = ub.value(QStringLiteral("user_book_status")).toObject().value(QStringLiteral("status")).toString();
+        status.updated = dateOf(ub.value(QStringLiteral("updated_at")));
+        status.userRating = numberOf(ub.value(QStringLiteral("rating")));
+        status.readCount = ub.value(QStringLiteral("read_count")).toInt();
+        QJsonArray reads = ub.value(QStringLiteral("user_book_reads")).toArray();
+        if (!reads.isEmpty()) {
+            QJsonObject r = reads.first().toObject();
+            QJsonValue p = r.value(QStringLiteral("progress"));
+            status.progress = p.isDouble() ? p.toDouble() : -1;
+            status.pages = r.value(QStringLiteral("progress_pages")).toInt();
+            status.started = dateOf(r.value(QStringLiteral("started_at")));
+            status.finished = dateOf(r.value(QStringLiteral("finished_at")));
+            status.editionPages = r.value(QStringLiteral("edition")).toObject().value(QStringLiteral("pages")).toInt();
+        }
+    }
+}
+
 // loadJournal gets the journal entries of the user for the book, from
 // journalOffset on. It gets more entries than a page can show, so
 // rebuildJournal knows if an older page exists. openJournal shows them.
+// A cached page shows at once. If the reply has the same entries, only the
+// cache line changes, else the page is built again.
 void Hardcover::loadJournal() {
+    QString key = QStringLiteral("journal/%1/%2").arg(bookId).arg(journalOffset);
+    int gen = ++journalGen;
+    journalError.clear();
+    journalCache = CacheState();
+    QJsonValue cached;
+    if (cacheGet(key, cached, journalCache.saved)) {
+        journal = cached.toArray();
+        journalCache.updating = true;
+    } else {
+        journalCache.saved = QDateTime();
+    }
+    bool fromCache = journalCache.saved.isValid();
     if (!wifiConnected()) {
-        journalError = QStringLiteral("Connect to Wi-Fi first.");
+        if (fromCache) {
+            journalCache.updating = false;
+            journalCache.error = QStringLiteral("Wi-Fi is off.");
+        } else {
+            journalError = QStringLiteral("Connect to Wi-Fi first.");
+        }
         openJournal();
         return;
     }
+    if (fromCache)
+        openJournal();
     QSettings store(QStringLiteral(HC_STORE), QSettings::IniFormat);
     QJsonObject vars;
     vars.insert(QStringLiteral("book"), bookId);
@@ -587,16 +701,35 @@ void Hardcover::loadJournal() {
     vars.insert(QStringLiteral("limit"), JOURNAL_FETCH + 1);
     vars.insert(QStringLiteral("offset"), journalOffset);
     journalLoading = true;
-    journalError.clear();
-    // Show no "Loading" page. The page opens when the entries arrive, and
-    // the entries of a page stay until the next page arrives. A "Loading"
-    // page between them is one more e-ink update, of most of the screen.
-    graphql(JOURNAL_QUERY, vars, [this](QJsonObject const &data, QString const &error) {
+    // Without a cached page, show no "Loading" page. The page opens when the
+    // entries arrive, and the entries of a page stay until the next page
+    // arrives. A "Loading" page between them is one more e-ink update, of
+    // most of the screen.
+    graphql(JOURNAL_QUERY, vars, [this, key, gen, fromCache](QJsonObject const &data, QString const &error) {
+        QJsonArray entries = data.value(QStringLiteral("reading_journals")).toArray();
+        if (error.isEmpty())
+            cachePut(key, entries);
+        if (gen != journalGen) // a newer request
+            return;
         journalLoading = false;
+        if (fromCache && !journalView) // the user closed the cached page
+            return;
+        hcLog(QStringLiteral("JOURNAL: offset %1, %2 entries, error \"%3\"").arg(journalOffset).arg(entries.size()).arg(error));
+        if (fromCache && !error.isEmpty()) {
+            journalCache.updating = false;
+            journalCache.error = error;
+            updateJournalNote();
+            return;
+        }
+        bool same = fromCache && entries == journal;
+        journalCache = CacheState();
         journalError = error;
+        if (same) {
+            updateJournalNote();
+            return;
+        }
         // rebuildJournal shows the entries that fit and sets journalMore.
-        journal = data.value(QStringLiteral("reading_journals")).toArray();
-        hcLog(QStringLiteral("JOURNAL: offset %1, %2 entries").arg(journalOffset).arg(journal.size()));
+        journal = entries;
         openJournal();
     });
 }
@@ -659,11 +792,12 @@ void Hardcover::unlink() {
     load();
 }
 
-// autoLoad loads the open book if it is not loaded yet, so the user does not
-// have to tap "Load from Hardcover". It returns true if it started a load,
-// which rebuilds the page.
+// autoLoad loads the open book each time the page opens, so the user does not
+// have to tap "Load from Hardcover". A cached status shows at once, and the
+// load updates it. It returns true if it started a load, which rebuilds the
+// page.
 bool Hardcover::autoLoad() {
-    if (auth != SignedIn || book.contentId.isEmpty() || (loadState != NotLoaded && loadState != Failed))
+    if (auth != SignedIn || book.contentId.isEmpty() || loadState == Loading)
         return false;
     load();
     return true;

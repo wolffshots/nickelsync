@@ -20,6 +20,7 @@
 #include "nickel.h"
 
 static QString const DATE_FORMAT = QStringLiteral("d MMMM yyyy");
+static QString const TIME_FORMAT = QStringLiteral("d MMMM yyyy, HH:mm");
 
 int Hardcover::px(int at1264) const { return at1264 * screen.width() / 1264; }
 
@@ -37,6 +38,19 @@ QString Hardcover::style() const {
         .arg(px(38))
         .arg(px(72))
         .arg(px(16));
+}
+
+// cacheText is the line on a page that shows cached data: when the data was
+// saved, and how its update goes.
+QString Hardcover::cacheText(CacheState const &c) {
+    QString t = QStringLiteral("From cache, saved %1.").arg(c.saved.toLocalTime().toString(TIME_FORMAT));
+    if (c.updating)
+        return t + QStringLiteral(" Updating.");
+    if (c.error == QLatin1String("Wi-Fi is off."))
+        return t + QStringLiteral(" Wi-Fi is off.");
+    if (!c.error.isEmpty())
+        return t + QStringLiteral(" Could not update: ") + c.error;
+    return t;
 }
 
 QLabel *Hardcover::label(QLayout *layout, char const *name, QString const &text) {
@@ -172,6 +186,8 @@ void Hardcover::rebuild() {
         // The book on Hardcover.
         QLocale en(QLocale::English, QLocale::UnitedStates);
         label(l, "nsValue", status.bookTitle.isEmpty() ? QStringLiteral("Hardcover book %1").arg(bookId) : status.bookTitle);
+        if (statusCache.saved.isValid())
+            label(l, "nsKey", cacheText(statusCache));
         if (!status.subtitle.isEmpty())
             label(l, "nsDesc", status.subtitle);
         if (!status.authors.isEmpty())
@@ -261,8 +277,10 @@ void Hardcover::onButton() {
         showSearch();
     } else if (a == "unlink") {
         unlink();
-    } else if ((a == "newer" || a == "older" || a == "reload") && journalLoading) {
-        // The entries stay on the page while the next page loads.
+    } else if ((a == "newer" || a == "older" || a == "reload") && journalLoading && !journalCache.saved.isValid()) {
+        // The entries stay on the page while the next page loads. A cached
+        // page can change while its update loads: loadJournal drops the
+        // reply of the older request.
     } else if ((a == "previous" || a == "more") && searchLoading) {
         // The results stay on the page while the next page loads.
     } else if (a == "newer") {
@@ -373,7 +391,7 @@ static QString entryTime(QJsonValue const &v) {
     if (!t.isValid())
         return QString();
     t.setTimeSpec(Qt::UTC);
-    return t.toLocalTime().toString(QStringLiteral("d MMMM yyyy, HH:mm"));
+    return t.toLocalTime().toString(TIME_FORMAT);
 }
 
 // showJournal loads the first journal page. openJournal opens the page when
@@ -414,6 +432,7 @@ void Hardcover::rebuildJournal() {
     ShowAtEnd show{journalBody};
     l->setSpacing(px(16));
     QLabel *title = label(l, "nsValue", status.bookTitle);
+    journalNote = journalCache.saved.isValid() ? label(l, "nsKey", cacheText(journalCache)) : nullptr;
     if (!journalError.isEmpty()) {
         label(l, "nsDesc", journalError);
         button(row(l, px(24)), QStringLiteral("Try again"), "reload", true);
@@ -456,6 +475,8 @@ void Hardcover::rebuildJournal() {
     }
     journalBody->ensurePolished();
     int avail = height - title->heightForWidth(width) - pager->sizeHint().height() - 2 * l->spacing();
+    if (journalNote)
+        avail -= journalNote->heightForWidth(width) + l->spacing();
 
     int used = 0;
     journalShown = 0;
@@ -497,6 +518,15 @@ void Hardcover::rebuildJournal() {
     range->setText(QStringLiteral("Entries %1 to %2").arg(journalOffset + 1).arg(journalOffset + journalShown));
     l->addStretch(1);
     l->addWidget(pager);
+}
+
+// updateJournalNote changes the text of the cache line only: the entries did
+// not change, so the rest of the page needs no paint. "Up to date" keeps the
+// line, so the entries do not move.
+void Hardcover::updateJournalNote() {
+    if (journalNote)
+        journalNote->setText(journalCache.saved.isValid() ? cacheText(journalCache)
+                                                          : QStringLiteral("Up to date with Hardcover."));
 }
 
 // ---- link book -------------------------------------------------------------

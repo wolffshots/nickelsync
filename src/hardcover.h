@@ -81,6 +81,14 @@ private:
         QDate updated;
     };
 
+    // CacheState tells if a page shows data from the cache, and how the
+    // update of that data goes.
+    struct CacheState {
+        QDateTime saved; // when the data was saved. Invalid: not from the cache.
+        bool updating = false;
+        QString error; // why the update failed
+    };
+
     // A journal page shows the entries that fit the screen, so it gets more
     // entries than one page can show.
     static const int JOURNAL_FETCH = 15;
@@ -104,6 +112,8 @@ private:
     void cancelSignIn();
     void signOut();
     void loadStatus(int bookId);
+    void applyStatus(int bookId, QJsonObject const &data);
+    void loadFailed(QString const &error);
     void loadJournal();
     void search();
     void link(int bookId);
@@ -117,6 +127,8 @@ private:
     QLabel *button(QLayout *layout, QString const &text, char const *action, bool primary);
     int px(int at1264) const;
     QString style() const;
+    static QString cacheText(CacheState const &c);
+    void updateJournalNote();
     QWidget *newPage(QString const &title, QWidget *&content, bool fill = false);
     QVBoxLayout *freshBody(QWidget *container, QPointer<QWidget> &body);
     void rebuild();
@@ -133,6 +145,7 @@ private:
     Book book;
     int bookId = 0;
     Status status;
+    CacheState statusCache;
 
     QString deviceCode;
     QString userCode;
@@ -150,7 +163,10 @@ private:
     int journalShown = 0;   // the entries on the page
     bool journalMore = false;
     bool journalLoading = false;
+    int journalGen = 0; // counts the journal requests; a reply of an older one is dropped
     QString journalError;
+    CacheState journalCache;
+    QPointer<QLabel> journalNote; // the cache line of the journal page
 
     QJsonArray results;
     int searchPageNo = 1;

@@ -49,6 +49,11 @@
 //                       token that the mock rejects, so NickelSync refreshes it.
 //                       The mock server hcmock.py must run (run.sh starts it).
 //   --isbn ISBN         the ISBN of the open book in the sim KoboReader.sqlite
+//   --hc-cache fresh|expired
+//                       write a Hardcover cache for book 101 (ISBN
+//                       9780000000001), saved 1 hour or 25 hours ago. Its
+//                       data is older than the mock data: 30% read, and one
+//                       journal entry.
 //   --dark              the open book uses dark mode
 //   --flush-log         log each paint pass of the Kobo window. With --steps,
 //                       check the paint passes of each step (exit code 18).
@@ -79,6 +84,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMap>
 #include <QMenu>
@@ -579,6 +586,33 @@ static void setupHardcover(QString const &state, QString const &isbn) {
     QSqlDatabase::removeDatabase(QStringLiteral("sim"));
 }
 
+// setupHcCache writes the Hardcover cache file, in the format of
+// src/hardcover.cc.
+static void setupHcCache(QString const &age) {
+    QString saved = QDateTime::currentDateTimeUtc()
+                        .addSecs(age == QLatin1String("expired") ? -25 * 3600 : -3600)
+                        .toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss"));
+    QByteArray data = R"({
+        "edition/9780000000001": 101,
+        "status/101": {"me": [{"id": 7, "user_books": [{"updated_at": "2026-11-14T09:00:00+00:00",
+            "user_book_status": {"status": "Currently Reading"},
+            "user_book_reads": [{"progress": 30, "progress_pages": 115, "started_at": "2026-11-02"}]}]}],
+            "books_by_pk": {"title": "The Lighthouse Keeper"}},
+        "journal/101/0": [{"event": "quote", "entry": "An old cached quote.",
+            "action_at": "2026-11-14T08:00:00+00:00", "metadata": {}}]
+    })";
+    QJsonObject in = QJsonDocument::fromJson(data).object(), out;
+    for (auto it = in.begin(); it != in.end(); ++it) {
+        QJsonObject e;
+        e.insert(QStringLiteral("saved"), saved);
+        e.insert(QStringLiteral("data"), it.value());
+        out.insert(it.key(), e);
+    }
+    QFile f(QStringLiteral("/mnt/onboard/.adds/nickelsync/hardcover-cache.json"));
+    if (f.open(QIODevice::WriteOnly))
+        f.write(QJsonDocument(out).toJson());
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     QStringList args = app.arguments();
@@ -590,7 +624,7 @@ int main(int argc, char **argv) {
     QStringList settings;
     QString autoKind;
     QMap<QString, int> expect;
-    QString hardcover, isbn;
+    QString hardcover, isbn, hcCache;
     QStringList steps;
     for (int i = 1; i < args.size(); i++) {
         QString a = args[i];
@@ -662,6 +696,9 @@ int main(int argc, char **argv) {
         } else if (a == "--isbn") {
             isbn = v;
             i++;
+        } else if (a == "--hc-cache") {
+            hcCache = v;
+            i++;
         } else if (a == "--steps") {
             steps = v.split(';', QString::SkipEmptyParts);
             i++;
@@ -695,6 +732,8 @@ int main(int argc, char **argv) {
     }
     if (!hardcover.isEmpty())
         setupHardcover(hardcover, isbn);
+    if (!hcCache.isEmpty())
+        setupHcCache(hcCache);
 
     QWidget *w = nickelstub_mainWindow();
     w->setFixedSize(size);

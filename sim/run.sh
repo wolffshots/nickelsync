@@ -107,7 +107,7 @@ if [ "${1:-}" = "--all" ]; then
     run hc-signin           --wifi on --hardcover signed-out \
                             --steps "Hardcover;Sign in to Hardcover;expect:NKSY-2026;wait:3000;expect:Link book"
     run hc-status           --wifi on --hardcover signed-in --isbn 9780000000001 --flush-log \
-                            --steps "Hardcover;expect:Currently Reading, 42%, page 160 of 384;expect:by Mara Quill;expect:North Cape #1. Published 2019. 384 pages. Rating 4.2 (1,234 ratings). Read by 5,678;expect:Fiction, Literary Fiction, Mystery;expect:Your rating 4.5;absent:Load from Hardcover;Reading journal;expect:The light does not ask;expect:15 November 2026, ;expect:Entries 1 to;absent:Newer;Older;expect:Want to Read;expect:Entries 12 to 14;absent:Older;Newer;expect:The light does not ask;absent:Newer;back;expect:Currently Reading, 42%;back;expect:Sync now;Hardcover;close;closed"
+                            --steps "Hardcover;expect:Currently Reading, 42%, page 160 of 384;expect:by Mara Quill;expect:North Cape #1. Published 2019. 384 pages. Rating 4.2 (1,234 ratings). Read by 5,678;expect:Fiction, Literary Fiction, Mystery;expect:Your rating 4.5;absent:Load from Hardcover;Reading journal;expect:The light does not ask;expect:15 November 2026, ;expect:Entries 1 to;absent:Newer;Older;expect:Want to Read;expect:Entries 12 to 14;absent:Older;Newer;expect:The light does not ask;expect:Up to date with Hardcover.;absent:Newer;back;expect:Currently Reading, 42%;back;expect:Sync now;Hardcover;close;closed"
     run hc-link             --wifi on --hardcover signed-in --flush-log \
                             --steps "Hardcover;expect:not on Hardcover;Link book;More results;Previous;The Lighthouse Keeper's Daughter;expect:Want to Read;Unlink book;expect:Link book"
     run hc-empty            --wifi on --hardcover signed-in --isbn 9780000000002 \
@@ -127,6 +127,14 @@ if [ "${1:-}" = "--all" ]; then
                             --steps "dark;Settings;dark;back;Hardcover;dark;close;closed"
     run dark-flush          --wifi on --hardcover signed-in --stats store --dark --flush-log \
                             --steps "Settings;60 s;back;Hardcover;back;Hardcover;close;closed"
+    # The cache: shown at once, then updated; kept without Wi-Fi; dropped
+    # after 24 hours.
+    run hc-cache-update     --wifi on --hardcover signed-in --isbn 9780000000001 --hc-cache fresh \
+                            --steps "Hardcover;expect:Currently Reading, 42%;absent:From cache;Reading journal;expect:The light does not ask;absent:An old cached quote;absent:From cache"
+    run hc-cache-offline    --hardcover signed-in --isbn 9780000000001 --stats store --hc-cache fresh \
+                            --steps "Hardcover;expect:From cache, saved;expect:Wi-Fi is off.;expect:Currently Reading, 30%;Reading journal;expect:From cache, saved;expect:An old cached quote."
+    run hc-cache-expired    --hardcover signed-in --isbn 9780000000001 --stats store --hc-cache expired \
+                            --steps "Hardcover;expect:Connect to Wi-Fi first.;absent:From cache;absent:30%"
     run hc-signout          --wifi on --hardcover signed-in --steps "Hardcover;Sign out;expect:Sign in to Hardcover"
     exit $rc
 fi
