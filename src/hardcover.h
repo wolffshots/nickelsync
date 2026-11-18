@@ -56,17 +56,34 @@ private:
     };
 
     struct Status {
-        bool inLibrary = false;
+        // The book on Hardcover.
         QString bookTitle;
+        QString subtitle;
+        QString authors;
+        QString series; // the featured series and the position, "Name #2"
+        QString genres;
+        QString description;
+        int year = 0;
+        int bookPages = 0;
+        double rating = 0; // the average of all users
+        int ratings = 0;
+        int readers = 0; // users that read the book
+        // The book in the library of the user.
+        bool inLibrary = false;
         QString status;
         double progress = -1;
         int pages = 0;
+        int editionPages = 0;
+        double userRating = 0;
+        int readCount = 0;
         QDate started;
         QDate finished;
         QDate updated;
     };
 
-    static const int JOURNAL_PAGE = 5; // entries on a journal page
+    // A journal page shows the entries that fit the screen, so it gets more
+    // entries than one page can show.
+    static const int JOURNAL_FETCH = 15;
     static const int SEARCH_PAGE = 6;  // results on a search page
 
     typedef std::function<void(int status, QJsonObject const &body)> Reply;
@@ -82,6 +99,7 @@ private:
     QString refreshError() const;
     void saveTokens(QJsonObject const &body);
     void clearTokens();
+    bool autoLoad();
     void startSignIn();
     void cancelSignIn();
     void signOut();
@@ -99,13 +117,14 @@ private:
     QLabel *button(QLayout *layout, QString const &text, char const *action, bool primary);
     int px(int at1264) const;
     QString style() const;
-    QWidget *newPage(QString const &title, QWidget *&content);
+    QWidget *newPage(QString const &title, QWidget *&content, bool fill = false);
     QVBoxLayout *freshBody(QWidget *container, QPointer<QWidget> &body);
     void rebuild();
     void rebuildJournal();
     void rebuildSearch();
     void showPage();
     void showJournal();
+    void openJournal();
     void showSearch();
 
     Auth auth = SignedOut;
@@ -127,6 +146,8 @@ private:
 
     QJsonArray journal;
     int journalOffset = 0;
+    QList<int> journalBack; // the offsets of the newer pages
+    int journalShown = 0;   // the entries on the page
     bool journalMore = false;
     bool journalLoading = false;
     QString journalError;

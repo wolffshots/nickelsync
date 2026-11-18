@@ -4,9 +4,11 @@
 // Each one has a body widget that rebuild*() builds again when its data
 // changes. The sign-in and the queries are in hardcover.cc.
 
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QJsonValue>
 #include <QLabel>
+#include <QLocale>
 #include <QVBoxLayout>
 #include <QVariant>
 
@@ -28,6 +30,8 @@ QString Hardcover::style() const {
                           "QLabel#nsDesc { font-size: %1px; }"
                           "QLabel#hcCode { font-size: %3px; font-weight: bold; }"
                           "QLabel#hcEntry { font-size: %1px; }"
+                          "QLabel#hcHead { font-size: %1px; font-weight: bold; }"
+                          "QFrame#hcBox { border: 1px solid #999999; }"
                           "QLabel#hcResult { font-size: %1px; border-bottom: 1px solid #999999; padding: %4px 0px; }")
         .arg(px(30))
         .arg(px(38))
@@ -124,7 +128,8 @@ void Hardcover::showPage() {
     QWidget *content = nullptr;
     mainView = newPage(QStringLiteral("Hardcover"), content);
     mainContent = content;
-    rebuild();
+    if (!autoLoad())
+        rebuild();
     openSubPage(mainView);
 }
 
@@ -164,7 +169,33 @@ void Hardcover::rebuild() {
     } else if (loadState == NotFound) {
         label(l, "nsDesc", QStringLiteral("This book is not on Hardcover, or it has no ISBN. Link it to a Hardcover book."));
     } else if (loadState == Loaded) {
+        // The book on Hardcover.
+        QLocale en(QLocale::English, QLocale::UnitedStates);
         label(l, "nsValue", status.bookTitle.isEmpty() ? QStringLiteral("Hardcover book %1").arg(bookId) : status.bookTitle);
+        if (!status.subtitle.isEmpty())
+            label(l, "nsDesc", status.subtitle);
+        if (!status.authors.isEmpty())
+            label(l, "nsDesc", QStringLiteral("by ") + status.authors);
+        QStringList facts;
+        if (!status.series.isEmpty())
+            facts << status.series;
+        if (status.year > 0)
+            facts << QStringLiteral("Published %1").arg(status.year);
+        if (status.bookPages > 0)
+            facts << QStringLiteral("%1 pages").arg(status.bookPages);
+        if (status.rating > 0)
+            facts << QStringLiteral("Rating %1 (%2 ratings)").arg(QString::number(status.rating, 'f', 1), en.toString(status.ratings));
+        if (status.readers > 0)
+            facts << QStringLiteral("Read by %1").arg(en.toString(status.readers));
+        if (!facts.isEmpty())
+            label(l, "nsKey", facts.join(QStringLiteral(". ")));
+        if (!status.genres.isEmpty())
+            label(l, "nsKey", status.genres);
+        if (!status.description.isEmpty())
+            label(l, "hcEntry", status.description);
+        l->addSpacing(px(24));
+
+        // The book in the library of the user.
         if (!status.inLibrary) {
             label(l, "nsDesc", QStringLiteral("Not in your Hardcover library"));
         } else {
@@ -172,17 +203,22 @@ void Hardcover::rebuild() {
             if (status.progress >= 0)
                 line += QStringLiteral(", %1%").arg(qRound(status.progress));
             if (status.pages > 0)
-                line += QStringLiteral(", page %1").arg(status.pages);
+                line += status.editionPages > 0 ? QStringLiteral(", page %1 of %2").arg(status.pages).arg(status.editionPages)
+                                                : QStringLiteral(", page %1").arg(status.pages);
             label(l, "nsDesc", line);
-            QStringList dates;
+            QStringList mine;
+            if (status.userRating > 0)
+                mine << QStringLiteral("Your rating ") + QString::number(status.userRating);
+            if (status.readCount > 1)
+                mine << QStringLiteral("Read %1 times").arg(status.readCount);
             if (status.started.isValid())
-                dates << QStringLiteral("Started ") + status.started.toString(DATE_FORMAT);
+                mine << QStringLiteral("Started ") + status.started.toString(DATE_FORMAT);
             if (status.finished.isValid())
-                dates << QStringLiteral("Finished ") + status.finished.toString(DATE_FORMAT);
+                mine << QStringLiteral("Finished ") + status.finished.toString(DATE_FORMAT);
             if (status.updated.isValid())
-                dates << QStringLiteral("Updated ") + status.updated.toString(DATE_FORMAT);
-            if (!dates.isEmpty())
-                label(l, "nsKey", dates.join(QStringLiteral(". ")));
+                mine << QStringLiteral("Updated ") + status.updated.toString(DATE_FORMAT);
+            if (!mine.isEmpty())
+                label(l, "nsKey", mine.join(QStringLiteral(". ")));
         }
     }
     if (!message.isEmpty())
@@ -225,15 +261,16 @@ void Hardcover::onButton() {
         showSearch();
     } else if (a == "unlink") {
         unlink();
-    } else if ((a == "newer" || a == "older") && journalLoading) {
+    } else if ((a == "newer" || a == "older" || a == "reload") && journalLoading) {
         // The entries stay on the page while the next page loads.
     } else if ((a == "previous" || a == "more") && searchLoading) {
         // The results stay on the page while the next page loads.
     } else if (a == "newer") {
-        journalOffset = qMax(0, journalOffset - JOURNAL_PAGE);
+        journalOffset = journalBack.isEmpty() ? 0 : journalBack.takeLast();
         loadJournal();
     } else if (a == "older") {
-        journalOffset += JOURNAL_PAGE;
+        journalBack.append(journalOffset);
+        journalOffset += journalShown;
         loadJournal();
     } else if (a == "reload") {
         loadJournal();
@@ -249,15 +286,17 @@ void Hardcover::onButton() {
 }
 
 // newPage makes a full-screen page, as showPage() in nickelsync.cc does.
-// content gets a layout with a stretch at the end. Fill content, then open the
-// page with openSubPage(), so that the first paint shows the content: each
-// later paint is one more e-ink update.
-QWidget *Hardcover::newPage(QString const &title, QWidget *&content) {
+// content gets a layout with a stretch at the end, or, with fill, no stretch:
+// then the body fills the page. Fill content, then open the page with
+// openSubPage(), so that the first paint shows the content: each later paint
+// is one more e-ink update.
+QWidget *Hardcover::newPage(QString const &title, QWidget *&content, bool fill) {
     content = new QWidget();
     content->setStyleSheet(style());
     QVBoxLayout *l = new QVBoxLayout(content);
     l->setContentsMargins(px(75), px(40), px(75), px(40));
-    l->addStretch(1);
+    if (!fill)
+        l->addStretch(1);
     QWidget *page = N3DialogFactory__getDialog(content, true);
     N3Dialog__setTitle(page, title);
     page->setFixedSize(screen);
@@ -327,53 +366,137 @@ static void describe(QJsonObject const &e, QString &heading, QString &text) {
         text = text.left(400).trimmed() + QStringLiteral("...");
 }
 
+// entryTime gives the time of a journal entry, such as
+// 2026-11-15T09:12:00+00:00 (UTC), in local time, as koboTime in serverstats.cc.
+static QString entryTime(QJsonValue const &v) {
+    QDateTime t = QDateTime::fromString(v.toString().left(19), QStringLiteral("yyyy-MM-ddTHH:mm:ss"));
+    if (!t.isValid())
+        return QString();
+    t.setTimeSpec(Qt::UTC);
+    return t.toLocalTime().toString(QStringLiteral("d MMMM yyyy, HH:mm"));
+}
+
+// showJournal loads the first journal page. openJournal opens the page when
+// the entries arrive.
 void Hardcover::showJournal() {
-    if (journalView || bookId <= 0)
+    if (journalView || journalLoading || bookId <= 0)
         return;
     journalOffset = 0;
+    journalBack.clear();
+    journalShown = 0;
     journal = QJsonArray();
-    QWidget *content = nullptr;
-    journalView = newPage(QStringLiteral("Reading journal"), content);
-    journalContent = content;
     loadJournal();
+}
+
+// openJournal builds the journal page again, or opens it over the Hardcover
+// page. If the user closed the Hardcover page in the meantime, it does nothing.
+void Hardcover::openJournal() {
+    if (journalView) {
+        rebuildJournal();
+        return;
+    }
+    if (!mainView)
+        return;
+    QWidget *content = nullptr;
+    journalView = newPage(QStringLiteral("Reading journal"), content, true);
+    journalContent = content;
+    rebuildJournal();
     openSubPage(journalView);
 }
 
+// rebuildJournal shows the entries from journalOffset on that fit the page,
+// each in a box. The pager row is at the bottom of the page, and Newer and
+// Older keep their place, also when one of them is hidden.
 void Hardcover::rebuildJournal() {
     if (!journalContent)
         return;
     QVBoxLayout *l = freshBody(journalContent, journalBody);
     ShowAtEnd show{journalBody};
-    l->setSpacing(px(8));
-    label(l, "nsValue", status.bookTitle);
-    l->addSpacing(px(16));
-    if (journalLoading) {
-        label(l, "nsDesc", QStringLiteral("Loading the reading journal"));
-        return;
-    }
+    l->setSpacing(px(16));
+    QLabel *title = label(l, "nsValue", status.bookTitle);
     if (!journalError.isEmpty()) {
         label(l, "nsDesc", journalError);
         button(row(l, px(24)), QStringLiteral("Try again"), "reload", true);
+    } else if (journal.isEmpty()) {
+        label(l, "nsDesc", QStringLiteral("No journal entries for this book."));
+    }
+    if (!journalError.isEmpty() || journal.isEmpty()) {
+        l->addStretch(1);
         return;
     }
-    if (journal.isEmpty())
-        label(l, "nsDesc", QStringLiteral("No journal entries for this book."));
+
+    // Make the pager row first, to know its height.
+    QWidget *pager = new QWidget(journalBody);
+    QHBoxLayout *pr = new QHBoxLayout(pager);
+    pr->setContentsMargins(0, 0, 0, 0);
+    QLabel *newer = button(pr, QStringLiteral("Newer"), "newer", false);
+    pr->addStretch(1);
+    QLabel *range = label(pr, "nsKey", QString());
+    range->setWordWrap(false);
+    pr->addStretch(1);
+    QLabel *older = button(pr, QStringLiteral("Older"), "older", false);
+    // The same width for both, so the range stays in the middle.
+    pager->ensurePolished();
+    int bw = qMax(newer->sizeHint().width(), older->sizeHint().width());
+    for (QLabel *b : {newer, older}) {
+        b->setMinimumWidth(bw);
+        QSizePolicy sp = b->sizePolicy();
+        sp.setRetainSizeWhenHidden(true);
+        b->setSizePolicy(sp);
+    }
+
+    // The first build is before the page shows. The Hardcover page below has
+    // the same layout and shows, so use its size. Without it, guess.
+    QWidget *ref = journalContent->isVisible() ? journalContent.data() : mainContent.data();
+    int width = ref ? ref->width() - px(150) : 0;
+    int height = ref ? ref->height() - px(80) : 0;
+    if (width <= 0 || height <= 0) {
+        width = screen.width() - px(150);
+        height = screen.height() * 3 / 4;
+    }
+    journalBody->ensurePolished();
+    int avail = height - title->heightForWidth(width) - pager->sizeHint().height() - 2 * l->spacing();
+
+    int used = 0;
+    journalShown = 0;
     for (QJsonValue const &v : journal) {
         QJsonObject e = v.toObject();
         QString heading, text;
         describe(e, heading, text);
-        QDate date = QDate::fromString(e.value(QStringLiteral("action_at")).toString().left(10), Qt::ISODate);
-        label(l, "nsKey", date.isValid() ? date.toString(DATE_FORMAT) + QStringLiteral(", ") + heading : heading);
+        QFrame *box = new QFrame(journalBody);
+        box->setObjectName(QStringLiteral("hcBox"));
+        QVBoxLayout *bl = new QVBoxLayout(box);
+        bl->setContentsMargins(px(24), px(16), px(24), px(16));
+        bl->setSpacing(px(8));
+        QHBoxLayout *head = new QHBoxLayout();
+        bl->addLayout(head);
+        label(head, "hcHead", heading);
+        QLabel *when = label(head, "nsKey", entryTime(e.value(QStringLiteral("action_at"))));
+        when->setWordWrap(false);
+        when->setAlignment(Qt::AlignRight | Qt::AlignTop);
         if (!text.isEmpty())
-            label(l, "hcEntry", text);
-        l->addSpacing(px(24));
+            label(bl, "hcEntry", text);
+        box->ensurePolished();
+        int h = box->heightForWidth(width);
+        if (h < 0)
+            h = box->sizeHint().height();
+        // Show at least one entry, also if it does not fit.
+        if (journalShown > 0 && used + h > avail) {
+            delete box;
+            break;
+        }
+        l->addWidget(box);
+        used += h + l->spacing();
+        journalShown++;
     }
-    QHBoxLayout *r = row(l, px(24));
-    if (journalOffset > 0)
-        button(r, QStringLiteral("Newer"), "newer", false);
-    if (journalMore)
-        button(r, QStringLiteral("Older"), "older", false);
-    r->addStretch(1);
+    journalMore = journal.size() > journalShown;
+    if (journalOffset == 0)
+        newer->hide();
+    if (!journalMore)
+        older->hide();
+    range->setText(QStringLiteral("Entries %1 to %2").arg(journalOffset + 1).arg(journalOffset + journalShown));
+    l->addStretch(1);
+    l->addWidget(pager);
 }
 
 // ---- link book -------------------------------------------------------------

@@ -301,7 +301,8 @@ void Hardcover::onPoll() {
                  hcLog("SIGNIN: done");
                  saveTokens(body);
                  message.clear();
-                 rebuild();
+                 if (!autoLoad())
+                     rebuild();
                  return;
              }
              // A network error is not the end of the flow. Poll again.
@@ -406,9 +407,12 @@ static char const EDITION_QUERY[] =
 static char const STATUS_QUERY[] =
     "query NickelSyncStatus($book: Int!) {"
     " me { id user_books(where: {book_id: {_eq: $book}}, limit: 1) {"
-    " updated_at user_book_status { status }"
-    " user_book_reads(order_by: {id: desc}, limit: 1) { progress progress_pages started_at finished_at } } }"
-    " books_by_pk(id: $book) { title } }";
+    " updated_at rating read_count user_book_status { status }"
+    " user_book_reads(order_by: {id: desc}, limit: 1)"
+    " { progress progress_pages started_at finished_at edition { pages } } } }"
+    " books_by_pk(id: $book) { title subtitle description pages release_year rating ratings_count"
+    " users_read_count cached_tags featured_book_series { position series { name } }"
+    " contributions(limit: 6) { contribution author { name } } } }";
 
 static char const JOURNAL_QUERY[] =
     "query NickelSyncJournal($book: Int!, $user: Int!, $limit: Int!, $offset: Int!) {"
@@ -468,6 +472,52 @@ void Hardcover::load() {
 
 static QDate dateOf(QJsonValue const &v) { return QDate::fromString(v.toString().left(10), Qt::ISODate); }
 
+// numberOf reads a Hasura number. A numeric column can come as a string.
+static double numberOf(QJsonValue const &v) { return v.toVariant().toDouble(); }
+
+// bookAuthors gets the authors of a book. A contribution without a role
+// (translator, illustrator) is an author.
+static QString bookAuthors(QJsonObject const &b) {
+    QStringList names;
+    for (QJsonValue const &c : b.value(QStringLiteral("contributions")).toArray()) {
+        QJsonObject o = c.toObject();
+        QString name = o.value(QStringLiteral("author")).toObject().value(QStringLiteral("name")).toString();
+        if (o.value(QStringLiteral("contribution")).isNull() && !name.isEmpty() && names.size() < 3)
+            names << name;
+    }
+    return names.join(QStringLiteral(", "));
+}
+
+// bookSeries gets the featured series and the position, "Name #2".
+static QString bookSeries(QJsonObject const &b) {
+    QJsonObject fs = b.value(QStringLiteral("featured_book_series")).toObject();
+    QString series = fs.value(QStringLiteral("series")).toObject().value(QStringLiteral("name")).toString();
+    if (!series.isEmpty() && fs.value(QStringLiteral("position")).isDouble())
+        series += QStringLiteral(" #") + QString::number(fs.value(QStringLiteral("position")).toDouble());
+    return series;
+}
+
+// bookGenres gets the first genres. cached_tags is
+// {"Genre": [{"tag": "Fantasy", ...}], "Mood": [...], ...}.
+static QString bookGenres(QJsonObject const &b) {
+    QStringList tags;
+    for (QJsonValue const &t : b.value(QStringLiteral("cached_tags")).toObject().value(QStringLiteral("Genre")).toArray()) {
+        QString tag = t.toObject().value(QStringLiteral("tag")).toString();
+        if (!tag.isEmpty() && tags.size() < 4)
+            tags << tag;
+    }
+    return tags.join(QStringLiteral(", "));
+}
+
+// bookDescription gets the description. An e-ink page does not scroll, so it
+// is short.
+static QString bookDescription(QJsonObject const &b) {
+    QString d = b.value(QStringLiteral("description")).toString().simplified();
+    if (d.size() > 360)
+        d = d.left(360).trimmed() + QStringLiteral("...");
+    return d;
+}
+
 void Hardcover::loadStatus(int id) {
     QJsonObject vars;
     vars.insert(QStringLiteral("book"), id);
@@ -480,7 +530,18 @@ void Hardcover::loadStatus(int id) {
         }
         bookId = id;
         status = Status();
-        status.bookTitle = data.value(QStringLiteral("books_by_pk")).toObject().value(QStringLiteral("title")).toString();
+        QJsonObject b = data.value(QStringLiteral("books_by_pk")).toObject();
+        status.bookTitle = b.value(QStringLiteral("title")).toString();
+        status.subtitle = b.value(QStringLiteral("subtitle")).toString();
+        status.authors = bookAuthors(b);
+        status.series = bookSeries(b);
+        status.genres = bookGenres(b);
+        status.description = bookDescription(b);
+        status.year = b.value(QStringLiteral("release_year")).toInt();
+        status.bookPages = b.value(QStringLiteral("pages")).toInt();
+        status.rating = numberOf(b.value(QStringLiteral("rating")));
+        status.ratings = b.value(QStringLiteral("ratings_count")).toInt();
+        status.readers = b.value(QStringLiteral("users_read_count")).toInt();
         QJsonArray users = data.value(QStringLiteral("me")).toArray();
         QJsonObject me = users.isEmpty() ? QJsonObject() : users.first().toObject();
         QSettings(QStringLiteral(HC_STORE), QSettings::IniFormat)
@@ -491,6 +552,8 @@ void Hardcover::loadStatus(int id) {
             status.inLibrary = true;
             status.status = ub.value(QStringLiteral("user_book_status")).toObject().value(QStringLiteral("status")).toString();
             status.updated = dateOf(ub.value(QStringLiteral("updated_at")));
+            status.userRating = numberOf(ub.value(QStringLiteral("rating")));
+            status.readCount = ub.value(QStringLiteral("read_count")).toInt();
             QJsonArray reads = ub.value(QStringLiteral("user_book_reads")).toArray();
             if (!reads.isEmpty()) {
                 QJsonObject r = reads.first().toObject();
@@ -499,6 +562,7 @@ void Hardcover::loadStatus(int id) {
                 status.pages = r.value(QStringLiteral("progress_pages")).toInt();
                 status.started = dateOf(r.value(QStringLiteral("started_at")));
                 status.finished = dateOf(r.value(QStringLiteral("finished_at")));
+                status.editionPages = r.value(QStringLiteral("edition")).toObject().value(QStringLiteral("pages")).toInt();
             }
         }
         hcLog(QStringLiteral("LOADED: book %1, in library %2").arg(id).arg(status.inLibrary));
@@ -507,35 +571,33 @@ void Hardcover::loadStatus(int id) {
     });
 }
 
-// loadJournal gets one page of the journal entries of the user for the book.
-// It asks for one entry more than a page, to know if an older page exists.
+// loadJournal gets the journal entries of the user for the book, from
+// journalOffset on. It gets more entries than a page can show, so
+// rebuildJournal knows if an older page exists. openJournal shows them.
 void Hardcover::loadJournal() {
     if (!wifiConnected()) {
         journalError = QStringLiteral("Connect to Wi-Fi first.");
-        rebuildJournal();
+        openJournal();
         return;
     }
     QSettings store(QStringLiteral(HC_STORE), QSettings::IniFormat);
     QJsonObject vars;
     vars.insert(QStringLiteral("book"), bookId);
     vars.insert(QStringLiteral("user"), store.value(QStringLiteral("auth/user_id")).toInt());
-    vars.insert(QStringLiteral("limit"), JOURNAL_PAGE + 1);
+    vars.insert(QStringLiteral("limit"), JOURNAL_FETCH + 1);
     vars.insert(QStringLiteral("offset"), journalOffset);
     journalLoading = true;
     journalError.clear();
-    // When entries show, keep them until the next page arrives. A "Loading"
-    // page between them is one more e-ink update.
-    if (journal.isEmpty())
-        rebuildJournal();
+    // Show no "Loading" page. The page opens when the entries arrive, and
+    // the entries of a page stay until the next page arrives. A "Loading"
+    // page between them is one more e-ink update, of most of the screen.
     graphql(JOURNAL_QUERY, vars, [this](QJsonObject const &data, QString const &error) {
         journalLoading = false;
         journalError = error;
+        // rebuildJournal shows the entries that fit and sets journalMore.
         journal = data.value(QStringLiteral("reading_journals")).toArray();
-        journalMore = journal.size() > JOURNAL_PAGE;
-        while (journal.size() > JOURNAL_PAGE)
-            journal.removeLast();
         hcLog(QStringLiteral("JOURNAL: offset %1, %2 entries").arg(journalOffset).arg(journal.size()));
-        rebuildJournal();
+        openJournal();
     });
 }
 
@@ -592,6 +654,17 @@ void Hardcover::unlink() {
     store.remove(linkKey());
     store.sync();
     hcLog("UNLINK");
+    // Without the link, the ISBN can still find the book.
     loadState = NotLoaded;
-    rebuild();
+    load();
+}
+
+// autoLoad loads the open book if it is not loaded yet, so the user does not
+// have to tap "Load from Hardcover". It returns true if it started a load,
+// which rebuilds the page.
+bool Hardcover::autoLoad() {
+    if (auth != SignedIn || book.contentId.isEmpty() || (loadState != NotLoaded && loadState != Failed))
+        return false;
+    load();
+    return true;
 }

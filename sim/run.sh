@@ -105,18 +105,18 @@ if [ "${1:-}" = "--all" ]; then
     run stats-sideloaded    --pick none --book file               --expect-stats none
     run hc-off              --wifi on --steps "absent:Hardcover"
     run hc-signin           --wifi on --hardcover signed-out \
-                            --steps "Hardcover;Sign in to Hardcover;expect:NKSY-2026;wait:3000;expect:Load from Hardcover"
+                            --steps "Hardcover;Sign in to Hardcover;expect:NKSY-2026;wait:3000;expect:Link book"
     run hc-status           --wifi on --hardcover signed-in --isbn 9780000000001 --flush-log \
-                            --steps "Hardcover;Load from Hardcover;expect:Currently Reading, 42%, page 160;Reading journal;expect:The light does not ask;Older;expect:Want to Read;back;expect:Currently Reading, 42%;back;expect:Sync now;Hardcover;close;closed"
+                            --steps "Hardcover;expect:Currently Reading, 42%, page 160 of 384;expect:by Mara Quill;expect:North Cape #1. Published 2019. 384 pages. Rating 4.2 (1,234 ratings). Read by 5,678;expect:Fiction, Literary Fiction, Mystery;expect:Your rating 4.5;absent:Load from Hardcover;Reading journal;expect:The light does not ask;expect:15 November 2026, ;expect:Entries 1 to;absent:Newer;Older;expect:Want to Read;expect:Entries 12 to 14;absent:Older;Newer;expect:The light does not ask;absent:Newer;back;expect:Currently Reading, 42%;back;expect:Sync now;Hardcover;close;closed"
     run hc-link             --wifi on --hardcover signed-in --flush-log \
-                            --steps "Hardcover;Load from Hardcover;expect:not on Hardcover;Link book;More results;Previous;The Lighthouse Keeper's Daughter;expect:Want to Read;Unlink book;expect:Load from Hardcover"
+                            --steps "Hardcover;expect:not on Hardcover;Link book;More results;Previous;The Lighthouse Keeper's Daughter;expect:Want to Read;Unlink book;expect:Link book"
     run hc-empty            --wifi on --hardcover signed-in --isbn 9780000000002 \
-                            --steps "Hardcover;Load from Hardcover;expect:Not in your Hardcover library;Reading journal;expect:No journal entries"
+                            --steps "Hardcover;expect:Not in your Hardcover library;Reading journal;expect:No journal entries"
     run hc-refresh          --wifi on --hardcover stale --isbn 9780000000001 \
-                            --steps "Hardcover;Load from Hardcover;expect:Currently Reading"
+                            --steps "Hardcover;expect:Currently Reading"
     # --stats store: the server stats do not connect Wi-Fi when the page opens.
     run hc-wifi-off         --hardcover signed-in --isbn 9780000000001 --stats store \
-                            --steps "Hardcover;Load from Hardcover;expect:Connect to Wi-Fi first."
+                            --steps "Hardcover;expect:Connect to Wi-Fi first.;expect:Load from Hardcover"
     # Each page change is one large paint pass, and a value tap is a small one.
     run pages-flush         --wifi on --hardcover signed-in --stats store --flush-log \
                             --steps "nohit:Settings;nohit:Hardcover;Settings;60 s;90 s;back;Hardcover;back;Hardcover;close;closed"

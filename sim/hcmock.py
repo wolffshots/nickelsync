@@ -7,7 +7,7 @@ It serves the endpoints that src/hardcover.cc uses: the OAuth device flow, the
 token refresh, the revoke, and the 4 GraphQL queries. The data is sample data.
 
 Books:
-    ISBN 9780000000001 -> book 101, in the library, 8 journal entries
+    ISBN 9780000000001 -> book 101, in the library, 14 journal entries
     ISBN 9780000000002 -> book 102, not in the library, no journal entries
     no ISBN            -> not found; the search finds book 101 and others
 
@@ -37,16 +37,32 @@ TITLES = {
     103: "The Lighthouse Keeper's Daughter",
 }
 
+BOOKS = {
+    101: {
+        "subtitle": "A Novel of the North Cape",
+        "description": "For forty years the keeper of the north cape light has kept a log of every ship, "
+                       "every storm and every visitor. When a stranger arrives with a page torn from that log, "
+                       "the keeper must decide which of his memories he can still trust.",
+        "pages": 384, "release_year": 2019, "rating": 4.2153, "ratings_count": 1234, "users_read_count": 5678,
+        "cached_tags": {"Genre": [{"tag": "Fiction"}, {"tag": "Literary Fiction"}, {"tag": "Mystery"}],
+                        "Mood": [{"tag": "reflective"}]},
+        "featured_book_series": {"position": 1, "series": {"name": "North Cape"}},
+        "contributions": [{"contribution": None, "author": {"name": "Mara Quill"}},
+                          {"contribution": "Illustrator", "author": {"name": "T. Quill"}}],
+    },
+}
+
 USER_BOOKS = {
     101: {
-        "updated_at": "2026-11-15T09:12:00+00:00",
+        "updated_at": "2026-11-15T09:12:00+00:00", "rating": 4.5, "read_count": 1,
         "user_book_status": {"status": "Currently Reading"},
         "user_book_reads": [
-            {"progress": 42.37, "progress_pages": 160, "started_at": "2026-11-02", "finished_at": None}
+            {"progress": 42.37, "progress_pages": 160, "started_at": "2026-11-02", "finished_at": None,
+             "edition": {"pages": 384}}
         ],
     },
     103: {
-        "updated_at": "2026-10-20T18:00:00+00:00",
+        "updated_at": "2026-10-20T18:00:00+00:00", "rating": None, "read_count": 0,
         "user_book_status": {"status": "Want to Read"},
         "user_book_reads": [],
     },
@@ -68,6 +84,18 @@ JOURNAL = {
          "action_at": "2026-11-15T09:12:00+00:00", "metadata": {}},
         {"event": "progress_updated", "entry": None, "action_at": "2026-11-14T21:40:00+00:00",
          "metadata": {"progress_was": 30, "progress": 42}},
+        {"event": "quote", "entry": "A log is a promise that someone will read it.",
+         "action_at": "2026-11-14T07:05:00+00:00", "metadata": {}},
+        {"event": "progress_updated", "entry": None, "action_at": "2026-11-13T22:15:00+00:00",
+         "metadata": {"progress_was": 25, "progress": 30}},
+        {"event": "note", "entry": "The second keeper writes in the third person. Why?",
+         "action_at": "2026-11-13T21:50:00+00:00", "metadata": {}},
+        {"event": "progress_updated", "entry": None, "action_at": "2026-11-13T08:30:00+00:00",
+         "metadata": {"progress_was": 18, "progress": 25}},
+        {"event": "quote", "entry": "Fog is only the sea deciding to stand up.",
+         "action_at": "2026-11-12T23:10:00+00:00", "metadata": {}},
+        {"event": "progress_updated", "entry": None, "action_at": "2026-11-12T22:40:00+00:00",
+         "metadata": {"progress_was": 10, "progress": 18}},
         {"event": "note", "entry": "Chapter 9 changes how I read the log of the first keeper.",
          "action_at": "2026-11-12T20:05:00+00:00", "metadata": {}},
         {"event": "quote", "entry": LONG_QUOTE, "action_at": "2026-11-10T22:30:00+00:00", "metadata": {}},
@@ -184,7 +212,7 @@ class Handler(BaseHTTPRequestHandler):
             book = v.get("book")
             ub = USER_BOOKS.get(book)
             data = {"me": [{"id": USER_ID, "user_books": [ub] if ub else []}],
-                    "books_by_pk": {"title": TITLES.get(book, "Book %s" % book)}}
+                    "books_by_pk": dict(BOOKS.get(book, {}), title=TITLES.get(book, "Book %s" % book))}
         elif op == "NickelSyncJournal":
             entries = JOURNAL.get(v.get("book"), []) if v.get("user") == USER_ID else []
             off, lim = v.get("offset", 0), v.get("limit", 10)
