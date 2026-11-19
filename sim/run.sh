@@ -136,6 +136,12 @@ if [ "${1:-}" = "--all" ]; then
     run hc-cache-expired    --hardcover signed-in --isbn 9780000000001 --stats store --hc-cache expired \
                             --steps "Hardcover;expect:Connect to Wi-Fi first.;absent:From cache;absent:30%"
     run hc-signout          --wifi on --hardcover signed-in --steps "Hardcover;Sign out;expect:Sign in to Hardcover"
+    # Refresh connects Wi-Fi, loads, and Wi-Fi goes off again when the page
+    # closes (RestoreWifi). A failed connection keeps the cached data.
+    run hc-refresh-wifi     --hardcover signed-in --isbn 9780000000001 --stats store --hc-cache fresh \
+                            --steps "Hardcover;expect:Wi-Fi is off.;expect:Currently Reading, 30%;Refresh;wait:4000;expect:Currently Reading, 42%;absent:From cache;close;closed;wifioff"
+    run hc-refresh-fail     --wifi fail --hardcover signed-in --isbn 9780000000001 --stats store --hc-cache fresh \
+                            --steps "Hardcover;Refresh;wait:4000;expect:Could not refresh: Wi-Fi did not connect.;expect:Currently Reading, 30%;close;closed;wifioff"
     exit $rc
 fi
 

@@ -63,7 +63,8 @@
 //                       "expect:TEXT" / "absent:TEXT" to check the labels on
 //                       the screen. "back" and "close" tap the back or close
 //                       button of the top page. "closed" checks that no page
-//                       is left. "nohit:TEXT" checks that the button has no
+//                       is left. "wifioff" checks that airplane mode is on.
+//                       "nohit:TEXT" checks that the button has no
 //                       hit state. "dark" checks that the top page is white
 //                       on black. A png follows each tap and wait.
 //
@@ -500,6 +501,12 @@ static void runStep(QStringList const &steps, int i) {
         if (!nickelstub_mainWindow()->findChildren<N3Dialog *>().isEmpty())
             return fail(15, "the close button left a NickelSync page open");
         std::fprintf(stderr, "sim: step closed: ok\n");
+        return runStep(steps, i + 1);
+    }
+    if (s == QLatin1String("wifioff")) {
+        if (!nickelstub_airplaneMode())
+            return fail(11, "Wi-Fi is still on after the page closed");
+        std::fprintf(stderr, "sim: step wifioff: ok\n");
         return runStep(steps, i + 1);
     }
     int wait = 1500;

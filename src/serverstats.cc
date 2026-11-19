@@ -93,9 +93,12 @@ void ServerStats::load() {
     started = true;
     showMessage(QStringLiteral("Loading the server stats"), "loading");
     // Create the manager after Wi-Fi is up. Qt 5.2 can mark a manager that was
-    // created offline as not accessible, and it then fails each request.
+    // created offline as not accessible, and it then fails each request. Qt 6
+    // has no network accessibility.
     QNetworkAccessManager *nam = new QNetworkAccessManager(this);
+#if QT_VERSION_MAJOR < 6
     nam->setNetworkAccessible(QNetworkAccessManager::Accessible);
+#endif
     QNetworkRequest req(QUrl(endpoint + QStringLiteral("/v1/library/") +
                              QString::fromLatin1(QUrl::toPercentEncoding(bookId)) + QStringLiteral("/state")));
     req.setHeader(QNetworkRequest::UserAgentHeader, QString::fromLatin1(STATS_AGENT));

@@ -79,12 +79,57 @@ bool Hardcover::enabled() {
 Hardcover::Hardcover(QObject *parent) : QObject(parent), net(new QNetworkAccessManager(this)) {
     poll.setSingleShot(true);
     connect(&poll, SIGNAL(timeout()), this, SLOT(onPoll()));
+    wifiWait.setSingleShot(true);
+    connect(&wifiWait, SIGNAL(timeout()), this, SLOT(onWifiFailed()));
     QSettings store(QStringLiteral(HC_STORE), QSettings::IniFormat);
     auth = store.value(QStringLiteral("auth/refresh_token")).toString().isEmpty() ? SignedOut : SignedIn;
 }
 
 bool Hardcover::wifiConnected() {
     return WirelessManager__connected(WirelessManager__sharedInstance());
+}
+
+// refreshWithWifi loads the open book again. If Wi-Fi is off, it connects
+// Wi-Fi first, as the server stats do. When the NickelSync page closes, Wi-Fi
+// goes off again if it was off before and RestoreWifi is true.
+void Hardcover::refreshWithWifi() {
+    if (wifiWaiting)
+        return;
+    QObject *wm = WirelessManager__sharedInstance();
+    if (!wm || wifiConnected()) {
+        load();
+        return;
+    }
+    wifiWaiting = true;
+    message.clear();
+    rebuild();
+    connect(wm, SIGNAL(networkConnected()), this, SLOT(onWifiUp()), Qt::UniqueConnection);
+    connect(wm, SIGNAL(networkFailedToConnect()), this, SLOT(onWifiFailed()), Qt::UniqueConnection);
+    wifiWait.start(settingInt("ConnectTimeout") * 1000);
+    connectPageWifi("HC");
+}
+
+void Hardcover::onWifiUp() {
+    if (!wifiWaiting)
+        return;
+    wifiWaiting = false;
+    wifiWait.stop();
+    hcLog("REFRESH: Wi-Fi connected");
+    // A closed page loads the book when it opens again.
+    if (mainView)
+        load();
+}
+
+// onWifiFailed also runs when Wi-Fi does not connect in ConnectTimeout. The
+// data on the page stays.
+void Hardcover::onWifiFailed() {
+    if (!wifiWaiting)
+        return;
+    wifiWaiting = false;
+    wifiWait.stop();
+    hcLog("REFRESH: Wi-Fi did not connect");
+    message = QStringLiteral("Could not refresh: Wi-Fi did not connect.");
+    rebuild();
 }
 
 // ---- requests ----------------------------------------------------------
