@@ -586,7 +586,7 @@ void Hardcover::rebuildSearch() {
         if (year > 0)
             line += QStringLiteral(", %1").arg(year);
         QLabel *t = reinterpret_cast<QLabel *>(calloc(1, 128));
-        TouchLabel__constructor(t, searchBody, 0);
+        TouchLabel__constructor(t, searchBody, Qt::WindowFlags());
         t->setObjectName(QStringLiteral("hcResult"));
         t->setTextFormat(Qt::PlainText);
         t->setWordWrap(true);

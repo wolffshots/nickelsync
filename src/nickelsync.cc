@@ -146,6 +146,16 @@ QWidget *(*MainWindowController__pushView)(MainWindowController *, QWidget *);
 
 static NickelSync *controller = nullptr;
 
+// labelPixmap returns the pixmap of a label, or a null pixmap. Qt 6 returns
+// it by value, Qt 5 returns a pointer that can be null.
+static QPixmap labelPixmap(QLabel const *l) {
+#if QT_VERSION_MAJOR >= 6
+    return l->pixmap();
+#else
+    return l->pixmap() ? *l->pixmap() : QPixmap();
+#endif
+}
+
 static QDateTime lastSyncTime() {
     QSettings conf(QStringLiteral(NICKEL_CONF), QSettings::IniFormat);
     return conf.value(QStringLiteral("ApplicationPreferences/LastSyncTime")).toDateTime();
@@ -557,11 +567,8 @@ void NickelSync::addIcon(QWidget *menuView) {
     }
     // A widget in a layout has no final size before the first show, so use
     // the size of the settings image.
-#if QT_VERSION_MAJOR >= 6
-    int height = settings->pixmap().isNull() ? settings->height() : settings->pixmap().height();
-#else
-    int height = settings->pixmap() ? settings->pixmap()->height() : settings->height();
-#endif
+    QPixmap settingsPix = labelPixmap(settings);
+    int height = settingsPix.isNull() ? settings->height() : settingsPix.height();
 
     // Nickel allocates 116 bytes for a TouchLabel on 6.0.279225.
     QLabel *icon = reinterpret_cast<QLabel *>(calloc(1, 128));
@@ -771,11 +778,12 @@ void followDarkMode(QWidget *page, QWidget *content) {
     page->setStyleSheet(page->styleSheet() +
                         QStringLiteral("\nN3ButtonLabel[borderedButton=true] { border-color: white; }"));
     for (QLabel *l : page->findChildren<QLabel *>()) {
-        if (content->isAncestorOf(l) || !l->pixmap() || l->pixmap()->isNull())
+        QPixmap pix = labelPixmap(l);
+        if (content->isAncestorOf(l) || pix.isNull())
             continue;
         // Qt 5.2 inverts a premultiplied image without a conversion, which
         // makes the transparent pixels white. So convert it first.
-        QImage icon = l->pixmap()->toImage().convertToFormat(QImage::Format_ARGB32);
+        QImage icon = pix.toImage().convertToFormat(QImage::Format_ARGB32);
         icon.invertPixels();
         l->setPixmap(QPixmap::fromImage(icon));
     }
