@@ -701,15 +701,28 @@ void NickelSync::startStats(ServerStats *stats) {
         return;
     }
     stats->waitForWifi(wm, settingInt("ConnectTimeout") * 1000);
+    startPageWifi("STATS");
+}
+
+// startPageWifi connects Wi-Fi for a NickelSync page: the server stats, or a
+// refresh of the Hardcover page. If Wi-Fi was off and RestoreWifi is true,
+// onPageClosed turns it off again. tag goes into the log line.
+void NickelSync::startPageWifi(char const *tag) {
+    WirelessWorkflowManager *wfm = WirelessWorkflowManager__sharedInstance();
     // A running sync connects Wi-Fi itself, and restores it.
-    if (state != Idle)
+    if (!wfm || state != Idle)
         return;
     if (WirelessWorkflowManager__isAirplaneMode(wfm)) {
         statsAirplane = settingBool("RestoreWifi");
         WirelessWorkflowManager__setAirplaneMode(wfm, false);
     }
-    nh_log("NickelSync: STATS: connecting Wi-Fi");
+    nh_log("NickelSync: %s: connecting Wi-Fi", tag);
     WirelessWorkflowManager__connectWirelessSilently(wfm);
+}
+
+void connectPageWifi(char const *tag) {
+    if (controller)
+        controller->startPageWifi(tag);
 }
 
 // onPageButton closes the page and starts the sync when the page is gone. The

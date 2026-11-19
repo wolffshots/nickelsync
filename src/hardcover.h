@@ -44,6 +44,8 @@ private Q_SLOTS:
     void onButton();
     void onPoll();
     void load();
+    void onWifiUp();
+    void onWifiFailed();
 
 private:
     enum Auth { SignedOut, SigningIn, SignedIn };
@@ -101,6 +103,7 @@ private:
 
     // hardcover.cc
     bool wifiConnected();
+    void refreshWithWifi();
     void post(QString const &url, QByteArray const &body, bool json, bool withToken, Reply done);
     void graphql(char const *query, QJsonObject const &vars, Result done, bool retried = false);
     void refresh(std::function<void(bool ok)> done);
@@ -155,6 +158,8 @@ private:
     QTimer poll;
 
     bool refreshing = false;
+    bool wifiWaiting = false; // a refresh waits for Wi-Fi
+    QTimer wifiWait;
     QList<std::function<void(bool)>> refreshWaiters;
 
     QJsonArray journal;

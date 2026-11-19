@@ -186,7 +186,9 @@ NickelSync has its own Hardcover sign-in. It does not use the token of NickelHar
 
 NickelSync asks only for read access: your profile, your library, your reading journal and the book catalog. It keeps the tokens in `KOBOeReader/.adds/nickelsync/hardcover.ini`. **Sign out** revokes the tokens and deletes them from the file.
 
-Tap **Load from Hardcover** to load the data. NickelSync does not load data on its own. If Wi-Fi is off, the page shows "Connect to Wi-Fi first."
+The page loads the data of the open book when it opens. Data from the last 24 hours shows at once from a cache. If Wi-Fi is off, the page shows the cached data, or "Connect to Wi-Fi first."
+
+Tap **Refresh** (or **Load from Hardcover**, if no data shows) to load the data again. If Wi-Fi is off, NickelSync connects Wi-Fi first, as for the server stats. When you close the NickelSync page, NickelSync turns Wi-Fi off again if it was off before and `RestoreWifi` is true.
 
 | Data | Where |
 |---|---|

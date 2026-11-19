@@ -239,18 +239,29 @@ void Hardcover::rebuild() {
     }
     if (!message.isEmpty())
         label(l, "nsDesc", message);
+    if (wifiWaiting)
+        label(l, "nsDesc", QStringLiteral("Connecting to Wi-Fi"));
 
     QHBoxLayout *r = row(l, px(24));
-    if (!book.contentId.isEmpty() && loadState != Loading) {
-        if (loadState == Loaded)
+    bool unlink = false;
+    if (!book.contentId.isEmpty() && loadState != Loading && !wifiWaiting) {
+        if (loadState == Loaded) {
             button(r, QStringLiteral("Reading journal"), "journal", true);
-        else if (loadState != NotFound)
+            button(r, QStringLiteral("Refresh"), "load", false);
+        } else if (loadState != NotFound)
             button(r, QStringLiteral("Load from Hardcover"), "load", true);
-        if (linkedBook() > 0)
-            button(r, QStringLiteral("Unlink book"), "unlink", false);
-        else if (loadState == NotFound)
+        unlink = linkedBook() > 0;
+        if (!unlink && loadState == NotFound)
             button(r, QStringLiteral("Link book"), "link", true);
     }
+    // Four buttons do not fit in one row. Then Unlink book and Sign out go on
+    // a second row.
+    if (unlink && loadState == Loaded) {
+        r->addStretch(1);
+        r = row(l, px(24));
+    }
+    if (unlink)
+        button(r, QStringLiteral("Unlink book"), "unlink", false);
     button(r, QStringLiteral("Sign out"), "signout", false);
     r->addStretch(1);
 }
@@ -270,7 +281,7 @@ void Hardcover::onButton() {
     } else if (a == "signout") {
         signOut();
     } else if (a == "load") {
-        load();
+        refreshWithWifi();
     } else if (a == "journal") {
         showJournal();
     } else if (a == "link") {
