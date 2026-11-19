@@ -1,6 +1,6 @@
 # NickelSync
 
-NickelSync adds a **Sync now** item to NickelMenu. The item connects to Wi-Fi and starts a native Kobo sync. It works inside a book, so you do not have to go to the home screen.
+NickelSync adds a sync icon to the reading menu of a book. The icon opens the NickelSync page with **Sync now**. **Sync now** connects to Wi-Fi and starts a native Kobo sync. You do not have to go to the home screen. If you use NickelMenu, NickelSync also adds a **Sync now** item to it.
 
 Inside a book, NickelSync also syncs the reading position of the open book. The stock sync does not do that. Nickel sends the position only when you leave the book.
 
@@ -10,7 +10,7 @@ Status: tested on a Kobo Libra Colour with firmware 4.46.23852. The test used Ca
 
 ## Requirements
 
-- [NickelMenu](https://github.com/pgaskin/NickelMenu). NickelSync has no menu of its own.
+- Optional: [NickelMenu](https://github.com/pgaskin/NickelMenu), for the **Sync now** item on the home screen.
 - A Kobo firmware that exports `N3SyncManager::silentSync()`. If a required symbol is missing, NickelHook does not load the mod. Nickel keeps working.
 - For the reading position: a kepub book that Nickel syncs with the server.
 
@@ -30,7 +30,14 @@ Without kpm:
 
 ## Use
 
-Open the NickelMenu menu in a book, or the main NickelMenu menu, and tap **Sync now**.
+In a book, tap the center of the page to open the reading menu. Tap the sync icon in the top bar, next to the more options icon. The icon opens the NickelSync page. The page shows the time of the last sync and the result of the last NickelSync sync since the last restart. Tap a button to close the page and start the sync:
+
+| Button | Action |
+|---|---|
+| Sync now | Syncs the reading position, then runs the full sync. The `QuickSync` setting does not apply. |
+| Sync reading position | Syncs only the reading position, as with `QuickSync=true`. See [Quick sync](#quick-sync). |
+
+With NickelMenu, you can also tap **Sync now** in the NickelMenu menu of a book or of the home screen. This item uses the `QuickSync` setting.
 
 NickelSync shows a short message for each step. The messages show at the top of the screen, so they do not cover a Nickel prompt in the center:
 
@@ -51,7 +58,7 @@ NickelSync shows a short message for each step. The messages show at the top of 
 | Wi-Fi connection timed out | The Wi-Fi connection took longer than `ConnectTimeout`. |
 | Sync already running | A sync is in progress. NickelSync does not start a second one. |
 
-The menu item writes to `/tmp/nickelsync`. NickelSync watches this file. You can also start a sync from a script with `echo > /tmp/nickelsync`.
+The NickelMenu item writes to `/tmp/nickelsync`. NickelSync watches this file. You can also start a sync from a script with `echo > /tmp/nickelsync`.
 
 ## Reading position
 
@@ -119,7 +126,9 @@ NickelHook then removes the mod. The mod also removes its NickelMenu file, its c
 
 ## How it works
 
-NickelSync is a [NickelHook](https://github.com/pgaskin/NickelHook) mod. When the trigger file changes, it does these steps:
+NickelSync is a [NickelHook](https://github.com/pgaskin/NickelHook) mod. It installs an application event filter when Nickel loads it. The filter acts only on show events. When a `ReadingMenuView` shows for the first time, the filter finds the `bottomHorizontalLayout` bar and the `settingsIcon`. On firmware 4.46 this bar is the lower row of the reading menu header, at the top of the screen. `settingsIcon` is the gear, and the last icon is the more options icon. The filter puts a `TouchLabel` with the Nickel status bar sync image before the last icon. NickelHardcover adds its icon in the same way, but from a hook. So the mod icons stay together, between the gear and the more options icon. A tap on the icon opens the NickelSync page, an `N3Dialog` that `MainWindowController::pushView()` shows over the book. A tap on a page button closes the page. When Nickel shows the book again, NickelSync starts the sync. If the firmware does not have the `TouchLabel`, `N3ButtonLabel`, `N3Dialog` or `pushView()` functions, the reading menu has no icon.
+
+When you tap a page button or the trigger file changes, NickelSync does these steps:
 
 1. If Wi-Fi is not connected, it calls `WirelessWorkflowManager::connectWirelessSilently()`. It then waits for the `networkConnected()` signal.
 2. If a kepub book is open, it gets the position from the server. It finds the `ReadingView` with `MainWindowController::viewWithObjectName()` and the reader child that inherits `KepubBookReaderBase`. It invokes the reader slot `onResume()`, which Nickel also calls when the device wakes. Nickel then sends `GET .../state` and shows the prompt if the server is newer.
@@ -129,7 +138,7 @@ NickelSync is a [NickelHook](https://github.com/pgaskin/NickelHook) mod. When th
 6. It reads the `syncStarted`, `finished` and `downloadStarted` signals of the sync manager.
 7. After `finished`, it compares `ApplicationPreferences/LastSyncTime` in `Kobo eReader.conf` with the value before the sync.
 
-Nickel shows each message in an `N3ToastView` window in the center of the screen. While a NickelSync message waits to show, NickelSync installs an application event filter. When an `N3ToastView` shows with a NickelSync text, the filter moves the window to the top. The move comes before Nickel draws the window. Nickel's own messages stay in the center.
+Nickel shows each message in an `N3ToastView` window in the center of the screen. When an `N3ToastView` shows with a NickelSync text, the event filter moves the window to the top. The move comes before Nickel draws the window. Nickel's own messages stay in the center.
 
 [Kobo AutoSync](https://github.com/kroshka4aplin/kobo-autosync) showed the `silentSync()` call and this result model.
 
@@ -137,11 +146,11 @@ Nickel shows each message in an `N3ToastView` window in the center of the screen
 
 NickelSync is designed so that it cannot stop the device from booting:
 
-- **No hooks.** NickelSync replaces no Nickel function. Before the first tap on **Sync now**, it only watches `/tmp/nickelsync`.
-- **Missing symbols.** If the firmware does not have a required Nickel function, NickelHook does not load the mod. Nickel starts as usual without it. The two functions for the reading position are optional. If a firmware does not have them, NickelSync runs the full sync only.
+- **No hooks.** NickelSync replaces no Nickel function. Before a reading menu shows, it only watches `/tmp/nickelsync` and checks the type of each Qt event in its event filter.
+- **Missing symbols.** If the firmware does not have a required Nickel function, NickelHook does not load the mod. Nickel starts as usual without it. The two functions for the reading position are optional. If a firmware does not have them, NickelSync runs the full sync only. The functions for the icon are also optional. If a firmware does not have them, the reading menu has no icon.
 - **Calls by name.** For the reading position, NickelSync calls Nickel slots and signals by name. If a name does not exist, the call fails without a crash.
 - **Crash at load.** If Nickel crashes within 15 seconds after it loads the mod, the NickelHook failsafe keeps the mod disabled on the next boot.
-- **Uninstall without the menu.** Connect the device over USB, delete `KOBOeReader/.adds/nickelsync/uninstall` and reboot.
+- **Uninstall without a menu.** Connect the device over USB, delete `KOBOeReader/.adds/nickelsync/uninstall` and reboot.
 
 ## Build
 

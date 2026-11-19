@@ -9,20 +9,27 @@
 #include <QTimer>
 #include <QWidget>
 
-// NickelSync starts a native Kobo sync when the trigger file changes. A
-// NickelMenu item writes the trigger file. Inside a book, it also gets and
-// sends the reading position of the open book. The class is a QObject because
+// NickelSync starts a native Kobo sync from its icon in the reading menu, or
+// when the trigger file changes. A NickelMenu item can write the trigger file.
+// Inside a book, it also gets and sends the reading position of the open
+// book. The class is a QObject because
 // the Nickel signals it listens to are only reachable through string-based
 // connect(), which needs real slots.
 class NickelSync : public QObject {
     Q_OBJECT
 
 public:
+    // FromConfig uses QuickSync from the config. Full and Quick override it.
+    enum Mode { FromConfig, Full, Quick };
+
     explicit NickelSync(QObject *parent = nullptr);
-    void trigger();
+    void trigger(Mode mode = FromConfig);
     bool eventFilter(QObject *obj, QEvent *event) override;
 
 private Q_SLOTS:
+    void showPage();
+    void onPageButton();
+    void startPending();
     void onConnected();
     void onConnectFailed();
     void onPositionReceived();
@@ -36,6 +43,8 @@ private:
     enum State { Idle, Connecting, Pulling, Checking, Requested, Running, Settling, Uploading };
 
     bool wire();
+    void addIcon(QWidget *menuView);
+    void moveToast(QObject *obj);
     QObject *openBook();
     void startPull();
     void push();
@@ -55,6 +64,9 @@ private:
     QPointer<QWidget> view; // the ReadingView of the open book
     QString position;       // the reading position result, for the last toast
     QStringList toasts;     // the main texts of toasts that Nickel did not show yet
+    QPointer<QWidget> page; // the open NickelSync page
+    Mode pending = FromConfig; // the sync to start when the page closes
+    QString lastResult;     // the result of the last sync since Nickel started
     QTimer timeout;
     QTimer settle;
     QElapsedTimer lastTrigger;

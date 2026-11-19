@@ -1,0 +1,11 @@
+<!DOCTYPE RCC><RCC version="1.0">
+    <!-- The Nickel images that src/nickelsync.cc loads. Put real Nickel images here to see the true look. -->
+    <qresource prefix="/images/statusbar">
+        <file alias="sync.png">sync.svg</file>
+        <file alias="sync_hit.png">sync_hit.svg</file>
+    </qresource>
+    <!-- Icons of other mods for the sim option bar-icons. -->
+    <qresource prefix="/sim">
+        <file>hardcover.svg</file>
+    </qresource>
+</RCC>
