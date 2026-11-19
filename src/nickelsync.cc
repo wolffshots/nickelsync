@@ -952,6 +952,8 @@ static bool nickelsync_uninstall() {
     nh_delete_file(NS_CONFIG ".corrupt");
     nh_delete_file(NS_LOG);
     nh_delete_file(NS_DIR "/hardcover.ini");
+    // nh_delete_dir removes only an empty folder.
+    nh_delete_file(NS_DIR "/hardcover-cache.json");
     nh_delete_dir(NS_DIR);
     // Nothing else deletes this file: it is not the library that runs.
     if (access(NS_OTHER_LIB, F_OK) == 0)

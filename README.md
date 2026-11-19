@@ -213,7 +213,7 @@ Without kpm:
 1. Delete `KOBOeReader/.adds/nickelsync/uninstall`.
 2. Reboot the device.
 
-NickelHook then removes the mod. The mod also removes its NickelMenu file, its configuration, `config.ini.corrupt`, its log, its Hardcover tokens, the `.installed` file and the build for the other Qt version.
+NickelHook then removes the mod. The mod also removes its NickelMenu file, its configuration, `config.ini.corrupt`, its log, its Hardcover tokens and cache, the `.installed` file and the build for the other Qt version.
 
 Delete only the file `uninstall`, not the folder `KOBOeReader/.adds/nickelsync`. Without `.installed`, NickelSync writes the `uninstall` file again at the next start and stays installed.
 
