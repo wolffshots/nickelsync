@@ -1,6 +1,7 @@
 // Desktop stand-ins for Nickel. See nickelstub.h.
 #include "nickelstub.h"
 
+#include <QApplication>
 #include <QDateTime>
 #include <QDebug>
 #include <QFont>
@@ -18,6 +19,8 @@
 #include <new>
 
 SimOptions simOptions;
+SimStats simStats;
+int ScopedSuspendDisable::count = 0;
 
 #define NICKEL_CONF "/mnt/onboard/.kobo/Kobo/Kobo eReader.conf"
 
@@ -25,6 +28,8 @@ static N3SyncManager *syncManager;
 static WirelessManager *wirelessManager;
 static WirelessWorkflowManager *workflowManager;
 static MainWindowController *mainWindowController;
+static N3PowerWorkflowManager *powerWorkflowManager;
+static PowerManager *powerManager;
 static QWidget *mainWindow;
 static ReadingView *readingView;
 static Volume volume;
@@ -35,6 +40,7 @@ static void simLog(QString const &line) { qInfo().noquote() << "nickel(sim):" <<
 
 void N3SyncManager::silentSync() {
     simLog("N3SyncManager::silentSync");
+    simStats.syncs++;
     syncing = true;
     QTimer::singleShot(500, this, [this] { Q_EMIT syncStarted(SyncState::Full); });
     QTimer::singleShot(simOptions.syncMs, this, [this] {
@@ -57,6 +63,46 @@ void WirelessWorkflowManager::connectWirelessSilently() {
         wirelessManager->connected = true;
         Q_EMIT wirelessManager->networkConnected();
     });
+}
+
+// ---- sleep ---------------------------------------------------------------
+
+void N3PowerWorkflowManager::sleep() {
+    simLog("N3PowerWorkflowManager: aboutToSleep");
+    sleeping = true;
+    Q_EMIT aboutToSleep();
+    QLabel *screen = new QLabel(QStringLiteral("Sleeping"), mainWindow);
+    screen->setObjectName(QStringLiteral("sleepScreen"));
+    screen->setAlignment(Qt::AlignCenter);
+    screen->setStyleSheet(QStringLiteral("background: white; font-size: 40px;"));
+    screen->setGeometry(mainWindow->rect());
+    readingView->hide();
+    screen->show();
+    QTimer::singleShot(1000, powerManager, SLOT(suspend()));
+}
+
+void PowerManager::suspend() {
+    if (simStats.suspended)
+        return;
+    if (ScopedSuspendDisable::count > 0) {
+        simStats.vetoes++;
+        simLog("PowerManager::suspend: vetoed");
+        if (simOptions.suspendRetry)
+            QTimer::singleShot(1000, this, SLOT(suspend()));
+        return;
+    }
+    simLog("PowerManager::suspend: suspended");
+    simStats.suspended = true;
+}
+
+ScopedSuspendDisable::ScopedSuspendDisable() {
+    count++;
+    simLog("ScopedSuspendDisable: created");
+}
+
+ScopedSuspendDisable::~ScopedSuspendDisable() {
+    count--;
+    simLog("ScopedSuspendDisable: deleted");
 }
 
 // ---- main window and toasts --------------------------------------------
@@ -90,6 +136,7 @@ N3ToastView::N3ToastView(QWidget *parent, QString const &main, QString const &su
 // screen window, so that move() coordinates are screen coordinates, as on the
 // device.
 void MainWindowController::toast(QString const &main, QString const &sub, int ms) {
+    simStats.toasts++;
     simLog("toast: " + main + (sub.isEmpty() ? QString() : " / " + sub));
     queue.append(qMakePair(qMakePair(main, sub), ms));
     if (!showing)
@@ -149,6 +196,7 @@ ConfirmationDialog::ConfirmationDialog(QWidget *parent, QString const &title, QS
 // sends GET .../state. The sim answers after pullMs.
 void KepubBookReaderBase::onResume() {
     simLog("KepubBookReaderBase::onResume: GET .../state");
+    simStats.pulls++;
     if (simOptions.server == SimOptions::ServerNone)
         return;
     QTimer::singleShot(simOptions.pullMs, this, [] {
@@ -316,7 +364,10 @@ ReadingView::ReadingView(QWidget *parent) : QWidget(parent) {
     setObjectName(QStringLiteral("ReadingView"));
     new KepubBookReaderBase(this);
     connect(this, &ReadingView::saveBookmark, [] { simLog("ReadingView::saveBookmark"); });
-    connect(this, &ReadingView::sendBookmark, [] { simLog("ReadingView::sendBookmark: PUT .../state"); });
+    connect(this, &ReadingView::sendBookmark, [] {
+        simLog("ReadingView::sendBookmark: PUT .../state");
+        simStats.pushes++;
+    });
 }
 
 void ReadingView::showMenu() {
@@ -364,34 +415,55 @@ void TouchLabel::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 N3ButtonLabel::N3ButtonLabel(QWidget *parent) : TouchLabel(parent) {
-    setStyleSheet(QStringLiteral("N3ButtonLabel { border: 2px solid black; border-radius: 6px; padding: 12px 28px; }"
-                                 "N3ButtonLabel[primaryButton=\"true\"] { background: black; color: white; }"));
+    // The application style sheet has the button styles (nickelstub_mainWindow).
     setFont(uiFont(21, true));
 }
 
 N3Dialog::N3Dialog(QWidget *content) : QFrame(nullptr) {
     setObjectName(QStringLiteral("N3Dialog"));
-    setStyleSheet(QStringLiteral("N3Dialog { background: white; } #n3TitleBar { border-bottom: 2px solid black; }"));
-    QVBoxLayout *l = new QVBoxLayout(this);
+    // Ui_N3Dialog sets a style sheet on the dialog. A mod that replaces it
+    // loses the tap inversion and the button padding of Nickel.
+    setStyleSheet(QStringLiteral("TouchLabel { qproperty-forceRepaintOnInvert: true; }"));
+    QVBoxLayout *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    // As in Ui_N3Dialog: the frame mainFrame has its own style sheet with a
+    // white background, and the title row is a layout in it, not a widget.
+    // The icons sit at the top of cells that are higher than the icons, so
+    // the frame shows below them.
+    QFrame *frame = new QFrame(this);
+    frame->setObjectName(QStringLiteral("mainFrame"));
+    frame->setStyleSheet(QStringLiteral("#mainFrame { background-color: white; }"));
+    outer->addWidget(frame);
+    QVBoxLayout *l = new QVBoxLayout(frame);
     l->setContentsMargins(0, 0, 0, 0);
     l->setSpacing(0);
-    QFrame *bar = new QFrame(this);
-    bar->setObjectName(QStringLiteral("n3TitleBar"));
-    QHBoxLayout *bl = new QHBoxLayout(bar);
+    QHBoxLayout *bl = new QHBoxLayout();
     bl->setContentsMargins(24, 10, 12, 10);
-    title = new QLabel(bar);
+    TouchLabel *backButton = new TouchLabel(frame);
+    backButton->setObjectName(QStringLiteral("n3Back"));
+    backButton->setPixmap(icon(QStringLiteral("<"), BAR_ICON));
+    backButton->hide();
+    back = backButton;
+    title = new QLabel(frame);
     title->setFont(uiFont(24, true));
-    TouchLabel *close = new TouchLabel(bar);
+    TouchLabel *close = new TouchLabel(frame);
     close->setObjectName(QStringLiteral("n3Close"));
     close->setPixmap(icon(QStringLiteral("✕"), BAR_ICON));
-    bl->addWidget(title, 1);
-    bl->addWidget(close);
-    l->addWidget(bar);
+    for (QLabel *icon : {static_cast<QLabel *>(backButton), static_cast<QLabel *>(close)}) {
+        QVBoxLayout *cell = new QVBoxLayout();
+        cell->addWidget(icon);
+        cell->addSpacing(BAR_ICON / 2);
+        bl->addLayout(cell);
+        if (icon == backButton)
+            bl->addWidget(title, 1);
+    }
+    l->addLayout(bl);
     if (content) {
-        content->setParent(this);
+        content->setParent(frame);
         l->addWidget(content, 1);
     }
     connect(close, &TouchLabel::tapped, this, &N3Dialog::closeTapped);
+    connect(backButton, &TouchLabel::tapped, this, &N3Dialog::backTapped);
 }
 
 // ---- the functions that nickelsync.cc resolves with nh_dlsym -----------
@@ -422,6 +494,10 @@ static QWidget *MainWindowController__viewWithObjectName(QObject const *, QStrin
     return mainWindow ? mainWindow->findChild<QWidget *>(name) : nullptr;
 }
 static void const *ReadingView__getVolume(void const *) { return &volume; }
+// Content is a base class of Volume. The sim has one open book.
+static QString Content__getId(void const *) { return simOptions.bookId; }
+static QString Content__getTitle(void const *) { return simOptions.title; }
+static QString Content__getAttribution(void const *) { return simOptions.author; }
 
 // nickelsync.cc allocates these objects with calloc and calls the Nickel
 // constructor in place. The sizes are the sizes that it allocates.
@@ -429,7 +505,8 @@ static void TouchLabel__constructor(QLabel *mem, QWidget *parent, QFlags<Qt::Win
     static_assert(sizeof(TouchLabel) <= 128, "TouchLabel does not fit");
     new (mem) TouchLabel(parent);
 }
-static void TouchLabel__setHitStateEnabled(QLabel *, bool) {}
+// The sim draws no hit state. It keeps the setting for the nohit: step.
+static void TouchLabel__setHitStateEnabled(QLabel *l, bool on) { l->setProperty("simHitState", on); }
 static void N3ButtonLabel__constructor(QLabel *mem, QWidget *parent) {
     static_assert(sizeof(N3ButtonLabel) <= 512, "N3ButtonLabel does not fit");
     new (mem) N3ButtonLabel(parent);
@@ -443,6 +520,10 @@ static void N3Dialog__setTitle(QWidget *d, QString const &text) { static_cast<N3
 // too. The view gets the size of the Kobo window, not of the desktop screen.
 static QWidget *MainWindowController__pushView(QObject *, QWidget *view) {
     simLog(QStringLiteral("MainWindowController::pushView: %1").arg(view->metaObject()->className()));
+    if (N3Dialog *d = qobject_cast<N3Dialog *>(view))
+        for (N3Dialog *under : mainWindow->findChildren<N3Dialog *>())
+            if (under != d && under->isVisible())
+                d->back->show();
     view->setParent(mainWindow);
     view->setFixedSize(mainWindow->size());
     view->move(0, 0);
@@ -452,6 +533,13 @@ static QWidget *MainWindowController__pushView(QObject *, QWidget *view) {
         readingView->show();
     });
     return view;
+}
+static QObject *N3PowerWorkflowManager__sharedInstance() { return powerWorkflowManager; }
+static bool N3PowerWorkflowManager__sleeping(QObject const *p) { return static_cast<N3PowerWorkflowManager const *>(p)->sleeping; }
+static QObject *PowerManager__sharedInstance() { return powerManager; }
+static void ScopedSuspendDisable__constructor(QObject *mem) {
+    static_assert(sizeof(ScopedSuspendDisable) <= 64, "ScopedSuspendDisable does not fit");
+    new (mem) ScopedSuspendDisable();
 }
 
 #define SYM(mangled, fn) {mangled, reinterpret_cast<void *>(fn)}
@@ -478,6 +566,13 @@ static const struct {
     SYM("_ZN15N3DialogFactory9getDialogEP7QWidgetb", N3DialogFactory__getDialog),
     SYM("_ZN8N3Dialog8setTitleERK7QString", N3Dialog__setTitle),
     SYM("_ZN20MainWindowController8pushViewEP7QWidget", MainWindowController__pushView),
+    SYM("_ZN22N3PowerWorkflowManager14sharedInstanceEv", N3PowerWorkflowManager__sharedInstance),
+    SYM("_ZNK22N3PowerWorkflowManager8sleepingEv", N3PowerWorkflowManager__sleeping),
+    SYM("_ZN20ScopedSuspendDisableC1Ev", ScopedSuspendDisable__constructor),
+    SYM("_ZN12PowerManager14sharedInstanceEv", PowerManager__sharedInstance),
+    SYM("_ZNK7Content5getIdEv", Content__getId),
+    SYM("_ZNK7Content8getTitleEv", Content__getTitle),
+    SYM("_ZNK7Content14getAttributionEv", Content__getAttribution),
 };
 
 void *nickelstub_resolve(const char *name) {
@@ -495,6 +590,20 @@ QWidget *nickelstub_mainWindow() {
         workflowManager = new WirelessWorkflowManager();
         workflowManager->airplaneMode = simOptions.wifi != SimOptions::WifiOn;
         mainWindowController = new MainWindowController();
+        powerWorkflowManager = new N3PowerWorkflowManager();
+        powerManager = new PowerManager();
+        // Nickel keeps its styles in the application style sheet. A page style
+        // sheet overrides them. As on the device: a button without a style
+        // property is italic text, and the darkMode property makes a widget
+        // and its children white on black.
+        qApp->setStyleSheet(QStringLiteral(
+            "*[darkMode=true], *[darkMode=true] * { color: white; background-color: black; }"
+            "N3Dialog { background: white; }"
+            "N3ButtonLabel { border: none; font-style: italic; padding: 12px 0px; }"
+            "N3ButtonLabel[borderedButton=\"true\"] { border: 2px solid black; border-radius: 6px;"
+            " padding: 12px 28px; font-style: normal; }"
+            "N3ButtonLabel[primaryButton=\"true\"] { border: 2px solid black; border-radius: 6px;"
+            " padding: 12px 28px; font-style: normal; background: black; color: white; }"));
         mainWindow = new QWidget();
         mainWindow->setObjectName(QStringLiteral("MainWindow"));
         mainWindow->setWindowTitle(QStringLiteral("NickelSync sim"));
@@ -502,8 +611,16 @@ QWidget *nickelstub_mainWindow() {
         QVBoxLayout *l = new QVBoxLayout(mainWindow);
         l->setContentsMargins(0, 0, 0, 0);
         l->addWidget(readingView);
+        // ReadingView::showEvent sets darkMode on a child widget of the
+        // reading view. The sim reading view has no child widget at the start,
+        // so it gets an empty one.
+        if (simOptions.dark)
+            (new QWidget(readingView))->setProperty("darkMode", true);
     }
     return mainWindow;
 }
 
 ReadingView *nickelstub_readingView() { return readingView; }
+N3PowerWorkflowManager *nickelstub_power() { return powerWorkflowManager; }
+
+bool nickelstub_airplaneMode() { return workflowManager->airplaneMode; }

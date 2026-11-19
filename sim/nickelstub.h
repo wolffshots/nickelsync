@@ -32,14 +32,35 @@ enum SyncType { Full };
 struct SimOptions {
     enum Wifi { WifiOff, WifiOn, WifiFail };
     enum Server { ServerSame, ServerNewer, ServerNone };
+    // The answer of the fake server to the server stats request (fakeserver.cc).
+    // Store: the sync server is the Kobo store, so NickelSync sends nothing.
+    enum Stats { StatsOk, StatsSlow, StatsError, StatsMissing, StatsTimeout, StatsStore };
     Wifi wifi = WifiOff;
     Server server = ServerSame;
+    Stats stats = StatsOk;
+    QString bookId = QStringLiteral("5f0c8a2e-6b1d-4c7e-9a3f-2d8b1e7c4a90"); // the ContentID of the open book
     int connectMs = 2000;
     int pullMs = 1000;
     int syncMs = 3000;
     QStringList barIcons; // other mods with an icon in the reading menu bar
+    bool suspendRetry = true; // PowerManager tries to suspend again after a veto
+    QString title = QStringLiteral("The Lighthouse Keeper"); // the title of the open book
+    QString author = QStringLiteral("Mara Quill");
+    bool dark = false; // the open book uses dark mode
 };
 extern SimOptions simOptions;
+
+// SimStats counts what the stand-ins saw, for the checks of the auto-sync
+// scenarios.
+struct SimStats {
+    int pulls = 0;     // KepubBookReaderBase::onResume
+    int pushes = 0;    // ReadingView::sendBookmark
+    int syncs = 0;     // N3SyncManager::silentSync
+    int toasts = 0;    // MainWindowController::toast
+    int vetoes = 0;    // suspend attempts that a ScopedSuspendDisable vetoed
+    bool suspended = false;
+};
+extern SimStats simStats;
 
 // nickelstub_resolve returns the stand-in for a mangled Nickel symbol, or null.
 void *nickelstub_resolve(const char *name);
@@ -47,6 +68,11 @@ void *nickelstub_resolve(const char *name);
 // first call.
 QWidget *nickelstub_mainWindow();
 class ReadingView *nickelstub_readingView();
+class N3PowerWorkflowManager *nickelstub_power();
+// fakeserver_start starts the fake Calibre-Web and returns the api_endpoint
+// for the Nickel config.
+QString fakeserver_start();
+bool nickelstub_airplaneMode();
 
 // ---- sync and Wi-Fi ----------------------------------------------------
 
@@ -76,6 +102,38 @@ class WirelessWorkflowManager : public QObject {
 public:
     void connectWirelessSilently();
     bool airplaneMode = true;
+};
+
+// ---- sleep ---------------------------------------------------------------
+
+// N3PowerWorkflowManager::sleep() does what Nickel's handleSleep() does:
+// it emits aboutToSleep(), shows the sleep screen, and asks PowerManager to
+// suspend 1 s later.
+class N3PowerWorkflowManager : public QObject {
+    Q_OBJECT
+public:
+    void sleep();
+    bool sleeping = false;
+Q_SIGNALS:
+    void aboutToSleep();
+};
+
+// PowerManager::suspend() suspends unless a ScopedSuspendDisable exists. After
+// a veto it tries again each second if simOptions.suspendRetry is true.
+// Whether Nickel tries again is not known.
+class PowerManager : public QObject {
+    Q_OBJECT
+private Q_SLOTS:
+    void suspend();
+};
+
+// ScopedSuspendDisable vetoes each suspend while it exists, as in Nickel.
+class ScopedSuspendDisable : public QObject {
+    Q_OBJECT
+public:
+    ScopedSuspendDisable();
+    ~ScopedSuspendDisable();
+    static int count;
 };
 
 // ---- main window and toasts --------------------------------------------
@@ -129,6 +187,8 @@ public:
 Q_SIGNALS:
     void saveBookmark();
     void sendBookmark(Volume volume);
+    void readerDoneLoading();
+    void readerWillClose();
 protected:
     void paintEvent(QPaintEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -138,15 +198,20 @@ protected:
 
 class TouchLabel : public QLabel {
     Q_OBJECT
+    // Nickel draws a tapped label inverted. The style sheet of Ui_N3Dialog
+    // sets this property on the labels of a dialog.
+    Q_PROPERTY(bool forceRepaintOnInvert MEMBER forceRepaintOnInvert)
 public:
     explicit TouchLabel(QWidget *parent) : QLabel(parent) {}
+    bool forceRepaintOnInvert = false;
 Q_SIGNALS:
     void tapped(bool);
 protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
 };
 
-// N3ButtonLabel is the Nickel button. primaryButton=true gives the dark style.
+// N3ButtonLabel is the Nickel button. primaryButton=true gives the dark style,
+// borderedButton=true an outline. Without either, Nickel draws italic text.
 class N3ButtonLabel : public TouchLabel {
     Q_OBJECT
 public:
@@ -154,13 +219,16 @@ public:
 };
 
 // N3Dialog is the full-screen Nickel page with a title bar and a close button.
+// A page over another N3Dialog also gets a back button, as on the device.
 class N3Dialog : public QFrame {
     Q_OBJECT
 public:
     explicit N3Dialog(QWidget *content);
     QLabel *title;
+    QLabel *back;
 Q_SIGNALS:
     void closeTapped();
+    void backTapped();
 };
 
 #endif
