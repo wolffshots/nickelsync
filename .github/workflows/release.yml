@@ -17,11 +17,12 @@ jobs:
         with:
           submodules: true
 
-      - name: Build KoboRoot.tgz with NickelTC
+      # Kobo.tgz has the Qt 5 and the Qt 6 build (firmware 4.x and 6.x).
+      # KoboRoot.tgz has the Qt 5 build only (firmware 4.x and kpm).
+      - name: Build Kobo.tgz and KoboRoot.tgz
         run: |
-          docker run --rm -v "$PWD":/src -w /src ghcr.io/pgaskin/nickeltc:1.0 \
-            make clean all koboroot VERSION="${{ github.ref_name }}"
-          sha256sum KoboRoot.tgz > SHA256SUMS
+          ENGINE=docker VERSION="${{ github.ref_name }}" sh tools/build-kobo.sh
+          sha256sum Kobo.tgz KoboRoot.tgz > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create release
@@ -32,4 +33,4 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "NickelSync ${{ github.ref_name }}" \
             --generate-notes \
-            KoboRoot.tgz SHA256SUMS
+            Kobo.tgz KoboRoot.tgz SHA256SUMS

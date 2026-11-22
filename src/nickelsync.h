@@ -33,6 +33,7 @@ public:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void log(QString const &line);
     void addSubPage(QWidget *sub);
+    void startPageWifi(char const *tag);
 
 Q_SIGNALS:
     // ended comes when a sync that trigger() started is done.

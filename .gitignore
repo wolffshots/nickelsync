@@ -9,3 +9,6 @@ compile_commands.json
 /sim/build/
 /sim/nickelsync-sim
 /sim/out/
+/Kobo.tgz
+/libnickelsync-qt6.so
+/src/*.d

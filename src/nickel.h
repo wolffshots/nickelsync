@@ -35,6 +35,13 @@ extern QString (*Content__getAttribution)(void const *);
 // the NickelSync page. nickelsync.cc defines it.
 void openSubPage(QWidget *page);
 
+// connectPageWifi connects Wi-Fi for a page over the NickelSync page. When the
+// NickelSync page closes, Wi-Fi goes off again if it was off before and the
+// setting RestoreWifi is true. The caller waits for networkConnected() or
+// networkFailedToConnect() of the WirelessManager. tag goes into the log.
+// nickelsync.cc defines it.
+void connectPageWifi(char const *tag);
+
 // followDarkMode makes page, an N3Dialog, white on black when the open book
 // uses dark mode. content is the widget of the page that NickelSync made.
 // Call it before the page shows. nickelsync.cc defines it.
